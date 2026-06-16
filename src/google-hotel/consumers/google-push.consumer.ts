@@ -4,7 +4,6 @@ import { Logger } from '@nestjs/common';
 import { CalendarMaterializerService } from '../services/calendar-materializer.service';
 import { CalendarRepositoryService } from '../services/calendar-repository.service';
 import { GoogleApiClientService } from '../services/google-api-client.service';
-import { LiveQueryCacheService } from '../services/live-query-cache.service';
 import { RateBuilder } from '../builders/rate.builder';
 import { AvailabilityBuilder } from '../builders/availability.builder';
 import { InventoryBuilder } from '../builders/inventory.builder';
@@ -17,7 +16,6 @@ export class GooglePushConsumer extends WorkerHost {
     private readonly materializerService: CalendarMaterializerService,
     private readonly calendarRepo: CalendarRepositoryService,
     private readonly googleApiClient: GoogleApiClientService,
-    private readonly cacheService: LiveQueryCacheService,
   ) {
     super();
   }
@@ -50,9 +48,6 @@ export class GooglePushConsumer extends WorkerHost {
 
       // 5. If base data changed, we might also push a Transaction message, 
       // but typically we'd do that on a separate queue or specific base-data trigger.
-      
-      // 6. Invalidate Live Query Cache
-      await this.cacheService.invalidateHotelCache(hotelCode);
 
       this.logger.log(`Completed sync job ${job.id} for ${hotelCode}`);
     } catch (error) {

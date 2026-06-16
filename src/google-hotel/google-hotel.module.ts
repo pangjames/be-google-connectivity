@@ -11,14 +11,12 @@ import { HotelCalendarInventory } from '../common/entities/hotel-calendar-invent
 import { CalendarMaterializerService } from './services/calendar-materializer.service';
 import { CalendarRepositoryService } from './services/calendar-repository.service';
 import { GoogleApiClientService } from './services/google-api-client.service';
-import { LiveQueryCacheService } from './services/live-query-cache.service';
 import { GoogleSyncService } from './services/google-sync.service';
 
 import { GooglePushConsumer } from './consumers/google-push.consumer';
 import { GoogleHorizonCron } from './cron/google-horizon.cron';
 
 import { GoogleSyncController } from './controllers/google-sync.controller';
-import { LiveQueryController } from './controllers/live-query.controller';
 
 @Module({
   imports: [
@@ -33,12 +31,11 @@ import { LiveQueryController } from './controllers/live-query.controller';
       name: 'google-sync',
     }),
   ],
-  controllers: [GoogleSyncController, LiveQueryController],
+  controllers: [GoogleSyncController],
   providers: [
     CalendarMaterializerService,
     CalendarRepositoryService,
     GoogleApiClientService,
-    LiveQueryCacheService,
     GoogleSyncService,
     GooglePushConsumer,
     GoogleHorizonCron,

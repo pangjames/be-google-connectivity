@@ -26,18 +26,3 @@ export class DeltaSyncRequestDto {
   @IsDateString()
   date: string;
 }
-
-export class LiveQueryRequestDto {
-  @ApiProperty({ example: 'HTL123' })
-  @IsString()
-  @IsNotEmpty()
-  hotelCode: string;
-
-  @ApiProperty({ example: '2026-07-10' })
-  @IsDateString()
-  checkIn: string;
-
-  @ApiProperty({ example: '2026-07-14' })
-  @IsDateString()
-  checkOut: string;
-}
