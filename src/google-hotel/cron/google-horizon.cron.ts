@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Hotel } from '../../common/entities/hotel.entity';
 import { GoogleSyncService } from '../services/google-sync.service';
 import { CalendarRepositoryService } from '../services/calendar-repository.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class GoogleHorizonCron {
@@ -15,12 +16,13 @@ export class GoogleHorizonCron {
     private readonly hotelRepo: Repository<Hotel>,
     private readonly googleSyncService: GoogleSyncService,
     private readonly calendarRepo: CalendarRepositoryService,
+    private readonly configService: ConfigService,
   ) {}
 
   // Run nightly at 01:00 AM
   @Cron('0 1 * * *')
   async handleCron() {
-    this.logger.log('Starting nightly Google Horizon Cron (365-day rolling window)');
+    this.logger.log('Starting nightly Google Horizon Cron (Rolling Horizon Extension)');
     
     try {
       this.logger.log('Purging historical data before sync...');
@@ -31,27 +33,52 @@ export class GoogleHorizonCron {
 
     const activeHotels = await this.hotelRepo.find({ where: { status: 1 } });
     
-    const today = new Date();
-    const maxHorizon = new Date();
-    maxHorizon.setDate(today.getDate() + 365);
+    const horizonMonths = this.configService.get<number>('ROLLING_HORIZON_MONTHS', 3);
+    const maxHorizonMonths = Math.min(horizonMonths, 12);
     
-    const startDate = today.toISOString().split('T')[0];
-    const endDate = maxHorizon.toISOString().split('T')[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    const syncPromises = activeHotels.map(hotel => 
-      this.googleSyncService.syncDateRange({
-        hotelCode: hotel.code,
-        startDate,
-        endDate,
-        priority: 10, // Low priority for nightly batch
-      }).then(() => {
-        this.logger.log(`Queued nightly horizon sync for ${hotel.code}`);
-      }).catch(error => {
-        this.logger.error(`Failed to queue nightly horizon sync for ${hotel.code}`, error.stack);
-      })
-    );
+    const targetMaxDate = new Date(today);
+    targetMaxDate.setMonth(today.getMonth() + maxHorizonMonths);
+
+    const syncPromises = activeHotels.map(async (hotel) => {
+      try {
+        const currentMaxDate = await this.calendarRepo.getMaxDate(hotel.code);
+        
+        let startDate: Date;
+        if (!currentMaxDate) {
+          // Initial sync
+          startDate = today;
+          this.logger.log(`Initial sync for ${hotel.code} (No data). Horizon: ${maxHorizonMonths} months`);
+        } else {
+          // Rolling extension
+          if (currentMaxDate >= targetMaxDate) {
+            this.logger.log(`Horizon already extended for ${hotel.code}. Skipping.`);
+            return;
+          }
+          startDate = new Date(currentMaxDate);
+          startDate.setDate(startDate.getDate() + 1);
+          this.logger.log(`Extending horizon for ${hotel.code} from ${startDate.toISOString().split('T')[0]} to ${targetMaxDate.toISOString().split('T')[0]}`);
+        }
+
+        const startStr = startDate.toISOString().split('T')[0];
+        const endStr = targetMaxDate.toISOString().split('T')[0];
+
+        await this.googleSyncService.syncDateRange({
+          hotelCode: hotel.code,
+          startDate: startStr,
+          endDate: endStr,
+          priority: 10, // Low priority for nightly batch
+        });
+        
+        this.logger.log(`Queued horizon sync for ${hotel.code}`);
+      } catch (error) {
+        this.logger.error(`Failed to process horizon sync for ${hotel.code}`, error.stack);
+      }
+    });
 
     await Promise.all(syncPromises);
-    this.logger.log(`Completed queueing nightly sync for ${activeHotels.length} hotels.`);
+    this.logger.log(`Completed nightly horizon extension for active hotels.`);
   }
 }

@@ -12,11 +12,13 @@ import { CalendarMaterializerService } from './services/calendar-materializer.se
 import { CalendarRepositoryService } from './services/calendar-repository.service';
 import { GoogleApiClientService } from './services/google-api-client.service';
 import { GoogleSyncService } from './services/google-sync.service';
+import { EventHandlerService } from './services/event-handler.service';
 
 import { GooglePushConsumer } from './consumers/google-push.consumer';
 import { GoogleHorizonCron } from './cron/google-horizon.cron';
 
 import { GoogleSyncController } from './controllers/google-sync.controller';
+import { PmsWebhookController } from './controllers/pms-webhook.controller';
 
 @Module({
   imports: [
@@ -31,12 +33,13 @@ import { GoogleSyncController } from './controllers/google-sync.controller';
       name: 'google-sync',
     }),
   ],
-  controllers: [GoogleSyncController],
+  controllers: [GoogleSyncController, PmsWebhookController],
   providers: [
     CalendarMaterializerService,
     CalendarRepositoryService,
     GoogleApiClientService,
     GoogleSyncService,
+    EventHandlerService,
     GooglePushConsumer,
     GoogleHorizonCron,
   ],

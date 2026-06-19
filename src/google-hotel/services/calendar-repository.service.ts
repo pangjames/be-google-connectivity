@@ -52,6 +52,15 @@ export class CalendarRepositoryService {
       .execute();
   }
 
+  async getMaxDate(hotelCode: string): Promise<Date | null> {
+    const result = await this.calendarRepo.createQueryBuilder('c')
+      .select('MAX(c.date)', 'maxDate')
+      .where('c.hotel_code = :hotelCode', { hotelCode })
+      .getRawOne();
+      
+    return result?.maxDate ? new Date(result.maxDate) : null;
+  }
+
   async getBaseData(hotelCode: string) {
     const roomTypes = await this.roomTypeRepo.find({
       where: { hotel_code: hotelCode },
