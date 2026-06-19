@@ -20,8 +20,7 @@ export class CalendarMaterializerService {
         room_type_id,
         rate_plan_id,
         date,
-        capacity,
-        amount_after_tax,
+        total_amount_after_tax,
         inv_count,
         restriction_master,
         restriction_arrival,
@@ -40,12 +39,11 @@ export class CalendarMaterializerService {
         rt.id AS room_type_id,
         rp.id AS rate_plan_id,
         dr.date,
-        rt.guest AS capacity,
-        COALESCE(rc.rate, rp.rate) AS amount_after_tax,
+        COALESCE(rc.rate, rp.rate) AS total_amount_after_tax,
         COALESCE(rc.room_qty, rt.room_qty) AS inv_count,
-        IF(COALESCE(rc.stop_sell, 0)=0, 'Open', 'Close') as restriction_master,
-        IF(COALESCE(rc.cta, 0)=0, 'Open', 'Close') as restriction_arrival,
-        IF(COALESCE(rc.ctd, 0)=0, 'Open', 'Close') as restriction_departure,
+        IF(COALESCE(rc.stop_sell, 0)=0, 1, 0) as restriction_master,
+        IF(COALESCE(rc.cta, 0)=0, 1, 0) as restriction_arrival,
+        IF(COALESCE(rc.ctd, 0)=0, 1, 0) as restriction_departure,
         COALESCE(rc.min_stay, rp.min_night) as set_min_los
       FROM tb_hotel_room_type rt
       LEFT JOIN tb_hotel th ON rt.hotel_id = th.id
@@ -55,8 +53,7 @@ export class CalendarMaterializerService {
         ON rc.rate_plan_id = rp.id AND rc.date = dr.date
       WHERE th.code = ?
       ON DUPLICATE KEY UPDATE
-        capacity = VALUES(capacity),
-        amount_after_tax = VALUES(amount_after_tax),
+        total_amount_after_tax = VALUES(total_amount_after_tax),
         inv_count = VALUES(inv_count),
         restriction_master = VALUES(restriction_master),
         restriction_arrival = VALUES(restriction_arrival),

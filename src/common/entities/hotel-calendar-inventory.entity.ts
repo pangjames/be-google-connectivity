@@ -14,23 +14,20 @@ export class HotelCalendarInventory {
   @Column({ primary: true, type: 'date' })
   date: Date;
 
-  @Column()
-  capacity: number;
-
-  @Column('float')
-  amount_after_tax: number;
+  @Column('decimal', { precision: 10, scale: 2 })
+  total_amount_after_tax: number;
 
   @Column()
   inv_count: number;
 
-  @Column()
-  restriction_master: string;
+  @Column('tinyint', { default: 1 })
+  restriction_master: number;
 
-  @Column()
-  restriction_arrival: string;
+  @Column('tinyint', { default: 1 })
+  restriction_arrival: number;
 
-  @Column()
-  restriction_departure: string;
+  @Column('tinyint', { default: 1 })
+  restriction_departure: number;
 
   @Column()
   set_min_los: number;

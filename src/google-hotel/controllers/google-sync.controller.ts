@@ -34,6 +34,7 @@ export class GoogleSyncController {
       hotelCode: dto.hotelCode,
       startDate: dto.startDate,
       endDate: dto.endDate,
+      priority: 1, // High priority for manual sync
     });
   }
 
@@ -49,7 +50,8 @@ export class GoogleSyncController {
     return this.googleSyncService.syncDateRange({
       hotelCode: dto.hotelCode,
       startDate: dto.date,
-      endDate: dto.date, // Just one day
+      endDate: dto.date,
+      priority: 1, // High priority for delta sync
     });
   }
 }

@@ -20,18 +20,36 @@ export class CalendarRepositoryService {
     hotelCode: string,
     startDate: string,
     endDate: string,
-  ): Promise<HotelCalendarInventory[]> {
-    return this.calendarRepo.find({
-      where: {
-        hotel_code: hotelCode,
-        date: Between(new Date(startDate), new Date(endDate)),
-      },
-      order: {
-        date: 'ASC',
-        room_type_id: 'ASC',
-        rate_plan_id: 'ASC',
-      },
-    });
+  ): Promise<any[]> { // returning any to include dynamically joined capacity
+    return this.calendarRepo.createQueryBuilder('c')
+      .leftJoin('tb_hotel_room_type', 'rt', 'c.room_type_id = rt.id')
+      .select([
+        'c.hotel_code as hotel_code',
+        'c.room_type_id as room_type_id',
+        'c.rate_plan_id as rate_plan_id',
+        'c.date as date',
+        'c.total_amount_after_tax as total_amount_after_tax',
+        'c.inv_count as inv_count',
+        'c.restriction_master as restriction_master',
+        'c.restriction_arrival as restriction_arrival',
+        'c.restriction_departure as restriction_departure',
+        'c.set_min_los as set_min_los',
+        'rt.guest as capacity'
+      ])
+      .where('c.hotel_code = :hotelCode', { hotelCode })
+      .andWhere('c.date BETWEEN :startDate AND :endDate', { startDate, endDate })
+      .orderBy('c.date', 'ASC')
+      .addOrderBy('c.room_type_id', 'ASC')
+      .addOrderBy('c.rate_plan_id', 'ASC')
+      .getRawMany();
+  }
+
+  async purgeHistoricalData(): Promise<void> {
+    await this.calendarRepo.createQueryBuilder()
+      .delete()
+      .from(HotelCalendarInventory)
+      .where('date < CURRENT_DATE()')
+      .execute();
   }
 
   async getBaseData(hotelCode: string) {

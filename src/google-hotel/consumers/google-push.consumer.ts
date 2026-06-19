@@ -7,10 +7,22 @@ import { GoogleApiClientService } from '../services/google-api-client.service';
 import { RateBuilder } from '../builders/rate.builder';
 import { AvailabilityBuilder } from '../builders/availability.builder';
 import { InventoryBuilder } from '../builders/inventory.builder';
+import Redis from 'ioredis';
+// @ts-ignore
+import Redlock from 'redlock';
 
-@Processor('google-sync', { concurrency: 5 })
+// Rate Limiter: max 10 jobs per 1000ms (1 second) to prevent Google API rate limits
+@Processor('google-sync', { 
+  concurrency: 5,
+  limiter: {
+    max: 10,
+    duration: 1000,
+  }
+})
 export class GooglePushConsumer extends WorkerHost {
   private readonly logger = new Logger(GooglePushConsumer.name);
+  private readonly redisClient: Redis;
+  private readonly redlock: Redlock;
 
   constructor(
     private readonly materializerService: CalendarMaterializerService,
@@ -18,6 +30,16 @@ export class GooglePushConsumer extends WorkerHost {
     private readonly googleApiClient: GoogleApiClientService,
   ) {
     super();
+    this.redisClient = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    });
+    this.redlock = new Redlock([this.redisClient as any], {
+      driftFactor: 0.01,
+      retryCount: 5,
+      retryDelay: 200,
+      retryJitter: 200,
+    });
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
@@ -25,8 +47,20 @@ export class GooglePushConsumer extends WorkerHost {
     this.logger.log(`Processing sync job ${job.id} for ${hotelCode} (${startDate} - ${endDate})`);
 
     try {
-      // 1. Materialize the flat table
-      await this.materializerService.materialize(hotelCode, startDate, endDate);
+      // 1. Materialize the flat table with Distributed Locking (prevent Race Condition)
+      let lock: any;
+      try {
+        // Lock for 10 seconds
+        lock = await this.redlock.acquire([`locks:hotel-materialize:${hotelCode}`], 10000);
+        await this.materializerService.materialize(hotelCode, startDate, endDate);
+      } catch (err) {
+        this.logger.error(`Failed to acquire lock for materializing ${hotelCode}`, err.stack);
+        throw err; // Trigger retry
+      } finally {
+        if (lock && typeof lock.release === 'function') {
+          await lock.release().catch((e: Error) => this.logger.error(`Failed to release lock for ${hotelCode}`, e.stack));
+        }
+      }
 
       // 2. Fetch the flat table data
       const inventories = await this.calendarRepo.getInventoriesForDateRange(hotelCode, startDate, endDate);
@@ -45,9 +79,6 @@ export class GooglePushConsumer extends WorkerHost {
       await this.googleApiClient.pushPayload(hotelCode, ratePayload, 'RateAmount');
       await this.googleApiClient.pushPayload(hotelCode, availPayload, 'Availability');
       await this.googleApiClient.pushPayload(hotelCode, invPayload, 'Inventory');
-
-      // 5. If base data changed, we might also push a Transaction message, 
-      // but typically we'd do that on a separate queue or specific base-data trigger.
 
       this.logger.log(`Completed sync job ${job.id} for ${hotelCode}`);
     } catch (error) {

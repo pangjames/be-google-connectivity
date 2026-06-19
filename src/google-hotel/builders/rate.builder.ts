@@ -4,7 +4,7 @@ import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inv
 export class RateBuilder {
   static buildRateAmountNotifRQ(
     hotelCode: string,
-    inventories: HotelCalendarInventory[],
+    inventories: any[],
   ): string {
     const root = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('OTA_HotelRateAmountNotifRQ', {
@@ -27,7 +27,7 @@ export class RateBuilder {
             .ele('Rate')
               .ele('BaseByGuestAmts')
                 .ele('BaseByGuestAmt', {
-                  AmountAfterTax: inv.amount_after_tax.toString(),
+                  AmountAfterTax: inv.total_amount_after_tax.toString(),
                   CurrencyCode: 'IDR', // Hardcoded IDR or get from hotel setting
                   NumberOfGuests: inv.capacity.toString(),
                 }).up()

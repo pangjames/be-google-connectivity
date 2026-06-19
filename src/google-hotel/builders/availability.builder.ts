@@ -4,7 +4,7 @@ import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inv
 export class AvailabilityBuilder {
   static buildAvailNotifRQ(
     hotelCode: string,
-    inventories: HotelCalendarInventory[],
+    inventories: any[],
   ): string {
     const root = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('OTA_HotelAvailNotifRQ', {
@@ -30,7 +30,7 @@ export class AvailabilityBuilder {
             }).up()
           .up()
           .ele('RestrictionStatus', {
-            Status: inv.restriction_master === 'Close' ? 'Close' : 'Open',
+            Status: inv.restriction_master === 0 ? 'Close' : 'Open',
             Restriction: 'Master',
           }).up()
         .up();

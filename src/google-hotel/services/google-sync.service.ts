@@ -31,6 +31,7 @@ export class GoogleSyncService {
       },
       {
         jobId,
+        priority: options.priority || 5, // Default to 5
         removeOnComplete: true,
         removeOnFail: false,
         attempts: 3,

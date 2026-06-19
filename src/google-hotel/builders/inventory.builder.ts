@@ -4,7 +4,7 @@ import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inv
 export class InventoryBuilder {
   static buildInvCountNotifRQ(
     hotelCode: string,
-    inventories: HotelCalendarInventory[],
+    inventories: any[],
   ): string {
     const root = create({ version: '1.0', encoding: 'UTF-8' })
       .ele('OTA_HotelInvCountNotifRQ', {
