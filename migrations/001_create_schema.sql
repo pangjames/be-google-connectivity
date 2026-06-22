@@ -166,6 +166,7 @@ CREATE TABLE `tb_hotel_calendar_inventory` (
   `rate_plan_id` int NOT NULL,
   `date` date NOT NULL,
   `total_amount_after_tax` decimal(10,2) NOT NULL,
+  `inv_count` int NOT NULL,
   `restriction_master` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1=Open, 0=Close',
   `restriction_arrival` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1=Open, 0=Close',
   `restriction_departure` tinyint(1) NOT NULL DEFAULT 1 COMMENT '1=Open, 0=Close',

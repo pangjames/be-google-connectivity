@@ -18,7 +18,7 @@ export class GoogleSyncService {
     const { hotelCode, startDate, endDate } = this.clampDateRange(options);
 
     // Deterministic Job ID to avoid chittering (duplicate jobs within a small window)
-    const jobId = `sync:${hotelCode}:${startDate}:${endDate}`;
+    const jobId = `sync-${hotelCode}-${startDate}-${endDate}`;
 
     this.logger.log(`Queueing sync for ${hotelCode} from ${startDate} to ${endDate}`);
 
