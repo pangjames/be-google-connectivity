@@ -14,63 +14,61 @@ export class EventHandlerService {
 
   async handleRateChange(
     hotelCode: string,
-    roomTypeCode: string,
-    ratePlanCode: string,
+    roomTypeId: number,
+    ratePlanId: number,
     startDate: string,
     endDate: string,
     newRate: number,
   ) {
-    this.logger.log(`Handling RATE_CHANGE for ${hotelCode} (${startDate} to ${endDate})`);
+    this.logger.log(`Handling RATE_CHANGE for ${hotelCode} room=${roomTypeId} rate=${ratePlanId} (${startDate} to ${endDate})`);
 
-    // 1. Pinpoint UPDATE on the materialized table
+    // Pinpoint UPDATE using numeric IDs as per actual DB schema
     const query = `
       UPDATE tb_hotel_calendar_inventory c
-      JOIN tb_hotel_room_type rt ON c.room_type_id = rt.id
-      JOIN tb_hotel_rate_plan rp ON c.rate_plan_id = rp.id
       SET c.total_amount_after_tax = ?
       WHERE c.hotel_code = ?
-        AND rt.code = ?
-        AND rp.code = ?
+        AND c.room_type_id = ?
+        AND c.rate_plan_id = ?
         AND c.date BETWEEN ? AND ?
     `;
 
-    await this.dataSource.query(query, [newRate, hotelCode, roomTypeCode, ratePlanCode, startDate, endDate]);
+    await this.dataSource.query(query, [newRate, hotelCode, roomTypeId, ratePlanId, startDate, endDate]);
 
-    // 2. Queue sync to Google
+    // Queue high-priority sync to Google for affected date range
     await this.googleSyncService.syncDateRange({
       hotelCode,
       startDate,
       endDate,
-      priority: 1, // High priority for live changes
+      priority: 1,
     });
   }
 
   async handleRestrictionChange(
     hotelCode: string,
-    roomTypeCode: string,
-    ratePlanCode: string,
+    roomTypeId: number,
+    ratePlanId: number,
     startDate: string,
     endDate: string,
     isOpen: boolean,
   ) {
-    this.logger.log(`Handling RESTRICTION_CHANGE for ${hotelCode} (${startDate} to ${endDate})`);
+    this.logger.log(`Handling RESTRICTION_CHANGE for ${hotelCode} room=${roomTypeId} rate=${ratePlanId} (${startDate} to ${endDate})`);
 
+    // DB convention: 1=Open, 0=Closed (matching actual tb_hotel_rate_custom stop_sell: 0=Open, 1=Closed)
     const statusValue = isOpen ? 1 : 0;
-    
-    // Using Master restriction as an example
+
+    // Pinpoint UPDATE using numeric IDs — no need to JOIN room_type/rate_plan tables
     const query = `
       UPDATE tb_hotel_calendar_inventory c
-      JOIN tb_hotel_room_type rt ON c.room_type_id = rt.id
-      JOIN tb_hotel_rate_plan rp ON c.rate_plan_id = rp.id
       SET c.restriction_master = ?
       WHERE c.hotel_code = ?
-        AND rt.code = ?
-        AND rp.code = ?
+        AND c.room_type_id = ?
+        AND c.rate_plan_id = ?
         AND c.date BETWEEN ? AND ?
     `;
 
-    await this.dataSource.query(query, [statusValue, hotelCode, roomTypeCode, ratePlanCode, startDate, endDate]);
+    await this.dataSource.query(query, [statusValue, hotelCode, roomTypeId, ratePlanId, startDate, endDate]);
 
+    // Queue high-priority sync to Google for affected date range
     await this.googleSyncService.syncDateRange({
       hotelCode,
       startDate,

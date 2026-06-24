@@ -16,6 +16,7 @@ export class CalendarMaterializerService {
 
     const query = `
       INSERT INTO tb_hotel_calendar_inventory (
+        hotel_id,
         hotel_code,
         room_type_id,
         rate_plan_id,
@@ -35,15 +36,16 @@ export class CalendarMaterializerService {
         WHERE date < DATE(?)
       )
       SELECT
+        th.id AS hotel_id,
         th.code AS hotel_code,
         rt.id AS room_type_id,
         rp.id AS rate_plan_id,
         dr.date,
         COALESCE(rc.rate, rp.rate) AS total_amount_after_tax,
         COALESCE(rc.room_qty, rt.room_qty) AS inv_count,
-        IF(COALESCE(rc.stop_sell, 0)=0, 1, 0) as restriction_master,
-        IF(COALESCE(rc.cta, 0)=0, 1, 0) as restriction_arrival,
-        IF(COALESCE(rc.ctd, 0)=0, 1, 0) as restriction_departure,
+        IF(COALESCE(rc.stop_sell, 0)=1, 0, 1) as restriction_master,
+        IF(COALESCE(rc.cta, 0)=1, 0, 1) as restriction_arrival,
+        IF(COALESCE(rc.ctd, 0)=1, 0, 1) as restriction_departure,
         COALESCE(rc.min_stay, rp.min_night) as set_min_los
       FROM tb_hotel_room_type rt
       LEFT JOIN tb_hotel th ON rt.hotel_id = th.id
