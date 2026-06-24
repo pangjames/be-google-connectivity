@@ -1,5 +1,5 @@
 import { create } from 'xmlbuilder2';
-import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inventory.entity';
+
 
 export class RateBuilder {
   static buildRateAmountNotifRQ(
@@ -18,8 +18,8 @@ export class RateBuilder {
       root
         .ele('RateAmountMessage')
           .ele('StatusApplicationControl', {
-            Start: inv.date.toISOString().split('T')[0],
-            End: inv.date.toISOString().split('T')[0],
+            Start: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
+            End: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
             InvTypeCode: inv.room_type_id.toString(),
             RatePlanCode: inv.rate_plan_id.toString(),
           }).up()

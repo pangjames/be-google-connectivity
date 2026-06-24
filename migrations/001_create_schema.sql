@@ -160,7 +160,7 @@ CREATE TABLE `tb_hotel_rate_custom` (
 
 -- 8) tb_hotel_calendar_inventory (Flat Table for push)
 CREATE TABLE `tb_hotel_calendar_inventory` (
-  `hotel_id` varchar(100) NOT NULL, -- using hotel code as ID is common for OTA, but here we store both code and IDs
+  `hotel_id` int NOT NULL,
   `hotel_code` varchar(100) NOT NULL,
   `room_type_id` int NOT NULL,
   `rate_plan_id` int NOT NULL,

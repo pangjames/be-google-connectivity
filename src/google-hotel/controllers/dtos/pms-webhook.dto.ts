@@ -59,4 +59,8 @@ export class RestrictionChangeDto {
   @ApiProperty({ example: false, description: 'true = Open, false = Closed (stop sell)' })
   @IsBoolean()
   isOpen: boolean;
+
+  @ApiProperty({ example: 'master', description: 'Restriction type to update', required: false })
+  @IsIn(['master', 'arrival', 'departure'])
+  restrictionType?: 'master' | 'arrival' | 'departure';
 }

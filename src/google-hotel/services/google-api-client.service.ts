@@ -25,6 +25,7 @@ export class GoogleApiClientService {
           'Authorization': `Bearer ${this.authToken}`,
         },
         timeout: 10000, // 10 seconds timeout
+        responseType: 'text',
       });
 
       // Google returns an XML response that should contain <Success/>
@@ -32,8 +33,9 @@ export class GoogleApiClientService {
         this.logger.log(`Successfully pushed ${messageType} for ${hotelCode}`);
         return true;
       } else {
-        this.logger.warn(`Google API warning/error for ${hotelCode}: ${response.data}`);
-        return false;
+        const errorMsg = `Google API warning/error for ${hotelCode}: ${response.data}`;
+        this.logger.warn(errorMsg);
+        throw new Error(errorMsg);
       }
     } catch (error) {
       this.logger.error(`Failed to push ${messageType} for ${hotelCode}`, error.message);

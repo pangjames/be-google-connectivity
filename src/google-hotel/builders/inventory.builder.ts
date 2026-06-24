@@ -1,5 +1,5 @@
 import { create } from 'xmlbuilder2';
-import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inventory.entity';
+
 
 export class InventoryBuilder {
   static buildInvCountNotifRQ(
@@ -17,8 +17,8 @@ export class InventoryBuilder {
       root
         .ele('Inventory')
           .ele('StatusApplicationControl', {
-            Start: inv.date.toISOString().split('T')[0],
-            End: inv.date.toISOString().split('T')[0],
+            Start: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
+            End: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
             InvTypeCode: inv.room_type_id.toString(),
             // RatePlanCode is generally not needed for room inventory, but keeping it if OTA requires it
           }).up()

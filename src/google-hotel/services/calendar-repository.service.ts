@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository } from 'typeorm';
 import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inventory.entity';
 import { HotelRoomType } from '../../common/entities/hotel-room-type.entity';
 import { HotelRatePlan } from '../../common/entities/hotel-rate-plan.entity';

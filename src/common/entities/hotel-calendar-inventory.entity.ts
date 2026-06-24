@@ -2,6 +2,9 @@ import { Entity, Column } from 'typeorm';
 
 @Entity('tb_hotel_calendar_inventory')
 export class HotelCalendarInventory {
+  @Column()
+  hotel_id: number;
+
   @Column({ primary: true })
   hotel_code: string;
 

@@ -73,6 +73,7 @@ export class GoogleSyncService {
       hotelCode: options.hotelCode,
       startDate: finalStart.toISOString().split('T')[0],
       endDate: finalEnd.toISOString().split('T')[0],
+      priority: options.priority,
     };
   }
 }

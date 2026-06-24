@@ -1,5 +1,6 @@
-import { Controller, Post, Body, Logger } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
+import { Controller, Post, Body, Logger, Headers, UnauthorizedException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 import { EventHandlerService } from '../services/event-handler.service';
 import { RateChangeDto, RestrictionChangeDto } from './dtos/pms-webhook.dto';
 
@@ -8,12 +9,27 @@ import { RateChangeDto, RestrictionChangeDto } from './dtos/pms-webhook.dto';
 export class PmsWebhookController {
   private readonly logger = new Logger(PmsWebhookController.name);
 
-  constructor(private readonly eventHandlerService: EventHandlerService) {}
+  constructor(
+    private readonly eventHandlerService: EventHandlerService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  private validateToken(authHeader: string) {
+    const validToken = this.configService.get<string>('ADMIN_API_TOKEN', 'default-secret-token');
+    if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== validToken) {
+      throw new UnauthorizedException('Invalid or missing Bearer token');
+    }
+  }
 
   @Post('rate-change')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Receive a rate change event from PMS and push delta to Google' })
   @ApiBody({ type: RateChangeDto })
-  async handleRateChange(@Body() payload: RateChangeDto) {
+  async handleRateChange(
+    @Headers('Authorization') authHeader: string,
+    @Body() payload: RateChangeDto,
+  ) {
+    this.validateToken(authHeader);
     this.logger.log(`Received RATE_CHANGE for hotel ${payload.hotel}`);
     try {
       await this.eventHandlerService.handleRateChange(
@@ -32,9 +48,14 @@ export class PmsWebhookController {
   }
 
   @Post('restriction-change')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Receive a restriction change event from PMS and push delta to Google' })
   @ApiBody({ type: RestrictionChangeDto })
-  async handleRestrictionChange(@Body() payload: RestrictionChangeDto) {
+  async handleRestrictionChange(
+    @Headers('Authorization') authHeader: string,
+    @Body() payload: RestrictionChangeDto,
+  ) {
+    this.validateToken(authHeader);
     this.logger.log(`Received RESTRICTION_CHANGE for hotel ${payload.hotel}`);
     try {
       await this.eventHandlerService.handleRestrictionChange(
@@ -44,6 +65,7 @@ export class PmsWebhookController {
         payload.start,
         payload.end,
         payload.isOpen ?? false,
+        payload.restrictionType ?? 'master',
       );
       return { status: 'success', message: 'Restriction change processed and queued to Google' };
     } catch (error) {

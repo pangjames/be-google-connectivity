@@ -33,7 +33,7 @@ export class GoogleHorizonCron {
 
     const activeHotels = await this.hotelRepo.find({ where: { status: 1 } });
     
-    const horizonMonths = this.configService.get<number>('ROLLING_HORIZON_MONTHS', 3);
+    const horizonMonths = parseInt(this.configService.get('ROLLING_HORIZON_MONTHS', '3'), 10);
     const maxHorizonMonths = Math.min(horizonMonths, 12);
     
     const today = new Date();
