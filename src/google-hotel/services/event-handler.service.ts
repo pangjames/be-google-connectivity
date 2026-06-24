@@ -22,17 +22,24 @@ export class EventHandlerService {
   ) {
     this.logger.log(`Handling RATE_CHANGE for ${hotelCode} room=${roomTypeId} rate=${ratePlanId} (${startDate} to ${endDate})`);
 
-    // Pinpoint UPDATE using numeric IDs as per actual DB schema
+    // Pinpoint UPDATE on the master table (tb_hotel_rate_custom) to prevent Race Condition
+    // Materializer will pick this up when BullMQ executes it.
     const query = `
-      UPDATE tb_hotel_calendar_inventory c
-      SET c.total_amount_after_tax = ?
-      WHERE c.hotel_code = ?
-        AND c.room_type_id = ?
-        AND c.rate_plan_id = ?
-        AND c.date BETWEEN ? AND ?
+      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, rate, create_user, create_date)
+      WITH RECURSIVE date_range AS (
+        SELECT DATE(?) AS date
+        UNION ALL
+        SELECT DATE_ADD(date, INTERVAL 1 DAY)
+        FROM date_range
+        WHERE date < DATE(?)
+      )
+      SELECT dr.date, ?, ?, 'system', NOW()
+      FROM date_range dr
+      ON DUPLICATE KEY UPDATE
+        rate = VALUES(rate);
     `;
 
-    await this.dataSource.query(query, [newRate, hotelCode, roomTypeId, ratePlanId, startDate, endDate]);
+    await this.dataSource.query(query, [startDate, endDate, ratePlanId, newRate]);
 
     // Queue high-priority sync to Google for affected date range
     await this.googleSyncService.syncDateRange({
@@ -54,24 +61,31 @@ export class EventHandlerService {
   ) {
     this.logger.log(`Handling RESTRICTION_CHANGE (${restrictionType}) for ${hotelCode} room=${roomTypeId} rate=${ratePlanId} (${startDate} to ${endDate})`);
 
-    // DB convention: 1=Open, 0=Closed (matching actual tb_hotel_rate_custom stop_sell: 0=Open, 1=Closed)
-    const statusValue = isOpen ? 1 : 0;
+    // DB convention: 0=Open, 1=Closed (tb_hotel_rate_custom stop_sell)
+    const statusValue = isOpen ? 0 : 1;
     
-    let columnName = 'restriction_master';
-    if (restrictionType === 'arrival') columnName = 'restriction_arrival';
-    if (restrictionType === 'departure') columnName = 'restriction_departure';
+    let columnName = 'stop_sell';
+    if (restrictionType === 'arrival') columnName = 'cta';
+    if (restrictionType === 'departure') columnName = 'ctd';
 
-    // Pinpoint UPDATE using numeric IDs — no need to JOIN room_type/rate_plan tables
+    // Pinpoint UPDATE on the master table (tb_hotel_rate_custom) to prevent Race Condition
+    // Materializer will pick this up when BullMQ executes it.
     const query = `
-      UPDATE tb_hotel_calendar_inventory c
-      SET c.${columnName} = ?
-      WHERE c.hotel_code = ?
-        AND c.room_type_id = ?
-        AND c.rate_plan_id = ?
-        AND c.date BETWEEN ? AND ?
+      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, ${columnName}, create_user, create_date)
+      WITH RECURSIVE date_range AS (
+        SELECT DATE(?) AS date
+        UNION ALL
+        SELECT DATE_ADD(date, INTERVAL 1 DAY)
+        FROM date_range
+        WHERE date < DATE(?)
+      )
+      SELECT dr.date, ?, ?, 'system', NOW()
+      FROM date_range dr
+      ON DUPLICATE KEY UPDATE
+        ${columnName} = VALUES(${columnName});
     `;
 
-    await this.dataSource.query(query, [statusValue, hotelCode, roomTypeId, ratePlanId, startDate, endDate]);
+    await this.dataSource.query(query, [startDate, endDate, ratePlanId, statusValue]);
 
     // Queue high-priority sync to Google for affected date range
     await this.googleSyncService.syncDateRange({
