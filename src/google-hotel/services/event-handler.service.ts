@@ -25,7 +25,7 @@ export class EventHandlerService {
     // Pinpoint UPDATE on the master table (tb_hotel_rate_custom) to prevent Race Condition
     // Materializer will pick this up when BullMQ executes it.
     const query = `
-      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, rate, create_user, create_date)
+      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, rate, create_user, create_date, update_user, update_date)
       WITH RECURSIVE date_range AS (
         SELECT DATE(?) AS date
         UNION ALL
@@ -33,10 +33,19 @@ export class EventHandlerService {
         FROM date_range
         WHERE date < DATE(?)
       )
-      SELECT dr.date, ?, ?, 'system', NOW()
+      SELECT 
+        dr.date, 
+        ? AS rate_plan_id, 
+        ? AS rate, 
+        'system' AS create_user, 
+        NOW() AS create_date,
+        'system' AS update_user,
+        NOW() AS update_date
       FROM date_range dr
       ON DUPLICATE KEY UPDATE
-        rate = VALUES(rate);
+        rate = VALUES(rate),
+        update_user = VALUES(update_user),
+        update_date = VALUES(update_date);
     `;
 
     await this.dataSource.query(query, [startDate, endDate, ratePlanId, newRate]);
@@ -71,7 +80,7 @@ export class EventHandlerService {
     // Pinpoint UPDATE on the master table (tb_hotel_rate_custom) to prevent Race Condition
     // Materializer will pick this up when BullMQ executes it.
     const query = `
-      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, ${columnName}, create_user, create_date)
+      INSERT INTO tb_hotel_rate_custom (date, rate_plan_id, ${columnName}, create_user, create_date, update_user, update_date)
       WITH RECURSIVE date_range AS (
         SELECT DATE(?) AS date
         UNION ALL
@@ -79,10 +88,19 @@ export class EventHandlerService {
         FROM date_range
         WHERE date < DATE(?)
       )
-      SELECT dr.date, ?, ?, 'system', NOW()
+      SELECT 
+        dr.date, 
+        ? AS rate_plan_id, 
+        ? AS ${columnName}, 
+        'system' AS create_user, 
+        NOW() AS create_date,
+        'system' AS update_user,
+        NOW() AS update_date
       FROM date_range dr
       ON DUPLICATE KEY UPDATE
-        ${columnName} = VALUES(${columnName});
+        ${columnName} = VALUES(${columnName}),
+        update_user = VALUES(update_user),
+        update_date = VALUES(update_date);
     `;
 
     await this.dataSource.query(query, [startDate, endDate, ratePlanId, statusValue]);
