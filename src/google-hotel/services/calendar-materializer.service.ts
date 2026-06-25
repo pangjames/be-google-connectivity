@@ -43,9 +43,9 @@ export class CalendarMaterializerService {
         dr.date,
         COALESCE(rc.rate, rp.rate) AS total_amount_after_tax,
         COALESCE(rc.room_qty, rt.room_qty) AS inv_count,
-        IF(COALESCE(rc.stop_sell, 0)=1, 0, 1) as restriction_master,
-        IF(COALESCE(rc.cta, 0)=1, 0, 1) as restriction_arrival,
-        IF(COALESCE(rc.ctd, 0)=1, 0, 1) as restriction_departure,
+        IFNULL(rc.stop_sell, 0) as restriction_master,
+        IFNULL(rc.cta, 0) as restriction_arrival,
+        IFNULL(rc.ctd, 0) as restriction_departure,
         COALESCE(rc.min_stay, rp.min_night) as set_min_los
       FROM tb_hotel_room_type rt
       LEFT JOIN tb_hotel th ON rt.hotel_id = th.id

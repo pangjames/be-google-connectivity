@@ -30,7 +30,7 @@ export class AvailabilityBuilder {
             }).up()
           .up()
           .ele('RestrictionStatus', {
-            Status: inv.restriction_master === 0 ? 'Close' : 'Open',
+            Status: inv.restriction_master === 1 ? 'Close' : 'Open',
             Restriction: 'Master',
           }).up()
         .up();
