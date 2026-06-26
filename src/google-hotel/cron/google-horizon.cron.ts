@@ -31,7 +31,15 @@ export class GoogleHorizonCron {
       this.logger.error('Failed to purge historical data', error.stack);
     }
 
-    const activeHotels = await this.hotelRepo.find({ where: { status: 1 } });
+    const activeHotels = await this.hotelRepo.createQueryBuilder('hotel')
+      .innerJoin(
+        'tb_hotel_connectivity_setup', 
+        'setup', 
+        'setup.hotel_code = hotel.code AND setup.setup_status = 1'
+      )
+      .where('hotel.status = 1')
+      .select(['hotel.code'])
+      .getMany();
     
     const horizonMonths = parseInt(this.configService.get('ROLLING_HORIZON_MONTHS', '3'), 10);
     const maxHorizonMonths = Math.min(horizonMonths, 12);
