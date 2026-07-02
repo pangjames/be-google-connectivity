@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { HotelConnectivitySetup } from '../../common/entities/hotel-connectivity-setup.entity';
 import { SyncDateRangeOptions } from '../interfaces/google-ari.interfaces';
 
 @Injectable()
@@ -9,15 +12,26 @@ export class GoogleSyncService {
 
   constructor(
     @InjectQueue('google-sync') private syncQueue: Queue,
+    @InjectRepository(HotelConnectivitySetup)
+    private readonly setupRepo: Repository<HotelConnectivitySetup>
   ) {}
 
   /**
    * The unified entry point for syncing ARI to Google.
    */
   async syncDateRange(options: SyncDateRangeOptions) {
-    const { hotelCode, startDate, endDate } = this.clampDateRange(options);
+    // Gatekeeper Action: Abort if static configuration is invalid or incomplete
+    const activeSetup = await this.setupRepo.findOne({
+      where: { hotel_code: options.hotelCode, setup_status: 1 }
+    });
+
+    if (!activeSetup) {
+      this.logger.warn(`Sync skipped for ${options.hotelCode} due to invalid static setup_status`);
+      return { message: 'Sync aborted. Property data structure is invalid or incomplete.', status: 'blocked' };
+    }
 
     // Deterministic Job ID to avoid chittering (duplicate jobs within a small window)
+    const { hotelCode, startDate, endDate } = this.clampDateRange(options);
     const jobId = `sync-${hotelCode}-${startDate}-${endDate}`;
 
     this.logger.log(`Queueing sync for ${hotelCode} from ${startDate} to ${endDate}`);
