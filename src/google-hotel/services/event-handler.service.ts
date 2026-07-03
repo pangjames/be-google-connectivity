@@ -4,7 +4,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { DataSource } from 'typeorm';
 import { Queue } from 'bullmq';
 import { GoogleSyncService } from './google-sync.service';
-import { GoogleConnectivityService } from './google-connectivity.service';
+import { PropertySyncReferenceDto } from '../controllers/dtos/google-connectivity.dto';
 
 @Injectable()
 export class EventHandlerService {
@@ -13,7 +13,6 @@ export class EventHandlerService {
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly googleSyncService: GoogleSyncService,
-    private readonly googleGatekeeper: GoogleConnectivityService,
     @InjectQueue('property-update-queue') private readonly propertyUpdateQueue: Queue,
   ) {}
 
@@ -71,27 +70,24 @@ export class EventHandlerService {
 
   /**
    * Handles real-time property delta updates from the extranet core system.
-   * Dispatches the task to BullMQ with strict job options and exponential backoff.
+   * Dispatches the coordinate reference to BullMQ for Master DB fetching.
    */
   async handleExtranetDeltaUpdate(
-    flatDataFromDatabase: any[],
+    entityReference: PropertySyncReferenceDto,
     updateType: 'hotel' | 'room' | 'rate_plan' 
   ): Promise<void> {
-    const targetHotelId = flatDataFromDatabase[0]?.hotel_id ?? 'Unknown';
-    this.logger.log(`Queueing automated data change event [${updateType.toUpperCase()}] for Hotel ID: ${targetHotelId}`);
+    const { hotel_id } = entityReference;
+    this.logger.log(`Queueing static sync trigger [${updateType.toUpperCase()}] for Hotel ID: ${hotel_id}`);
     
-    const generatedJobId = `static-sync-${targetHotelId}-${updateType}-${Date.now()}`;
+    const generatedJobId = `static-sync-${hotel_id}-${updateType}-${Date.now()}`;
 
     try {
       await this.propertyUpdateQueue.add(
         'sync-delta',
-        {
-          flatDataFromDatabase,
-          updateType,
-        },
+        { entityReference, updateType },
         {
           jobId: generatedJobId,
-          priority: 3,
+          priority: 3, // Lower priority than live price/restriction updates
           removeOnComplete: true,
           removeOnFail: false,
           attempts: 3,
@@ -104,7 +100,7 @@ export class EventHandlerService {
 
       this.logger.log(`Successfully dispatched job [${generatedJobId}] to property-update-queue`);
     } catch (error) {
-      this.logger.error(`Failed to dispatch job for Hotel ID ${targetHotelId} into BullMQ`, error.message);
+      this.logger.error(`Failed to dispatch job for Hotel ID ${hotel_id} into BullMQ`, error.message);
       throw error;
     }
   }

@@ -11,6 +11,7 @@ import { HotelConnectivitySetup } from '../common/entities/hotel-connectivity-se
 
 import { CalendarMaterializerService } from './services/calendar-materializer.service';
 import { CalendarRepositoryService } from './services/calendar-repository.service';
+import { PropertyRepositoryService } from './services/property-repository.service'; 
 import { GoogleApiClientService } from './services/google-api-client.service';
 import { GoogleSyncService } from './services/google-sync.service';
 import { EventHandlerService } from './services/event-handler.service';
@@ -48,6 +49,7 @@ import { MockGoogleApiController } from './controllers/mock-google-api.controlle
   providers: [
     CalendarMaterializerService,
     CalendarRepositoryService,
+    PropertyRepositoryService,
     GoogleApiClientService,
     GoogleSyncService,
     GoogleConnectivityService,

@@ -2,8 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HotelConnectivitySetup } from '../../common/entities/hotel-connectivity-setup.entity';
-import { GoogleStaticFeedBuilder } from '../builders/google-static-feed.builder';
+import { PropertyRepositoryService } from './property-repository.service';
 import { GoogleApiClientService } from './google-api-client.service';
+import { GoogleSyncService } from './google-sync.service';
+import { GoogleStaticFeedBuilder } from '../builders/google-static-feed.builder';
+import { PropertySyncReferenceDto } from '../controllers/dtos/google-connectivity.dto';
 
 @Injectable()
 export class GoogleConnectivityService {
@@ -12,14 +15,18 @@ export class GoogleConnectivityService {
   constructor(
     @InjectRepository(HotelConnectivitySetup)
     private readonly setupRepo: Repository<HotelConnectivitySetup>,
+    private readonly propertyRepo: PropertyRepositoryService,
     private readonly googleApiConnector: GoogleApiClientService,
+    private readonly googleSyncService: GoogleSyncService,
   ) {}
 
   /**
    * Validates row data against Google XSD specifications.
    * Returns 1 if valid, 0 otherwise.
    */
-  validateGatekeeper(row: any): number {
+  private validateGatekeeper(row: any): number {
+    if (!row) return 0;
+
     // Hotel Profile Validation
     if (!row.hotel_code || !row.hotel_name || !row.street_address || !row.city || !row.province || !row.phone) {
       return 0;
@@ -40,103 +47,71 @@ export class GoogleConnectivityService {
   }
 
   /**
-   * Processes partial data updates from Extranet and syncs with Google if valid.
+   * Processes entity reference, fetches fresh data, and pushes static updates to Google.
    */
   async handleExtranetDeltaUpdate(
-    payloadData: any[], 
+    entityReference: PropertySyncReferenceDto,
     updateType: 'hotel' | 'room' | 'rate_plan'
   ): Promise<void> {
+    const { hotel_id, room_type_id, rate_plan_id } = entityReference;
     
-    // Protect against empty payload data
-    if (!payloadData || !Array.isArray(payloadData) || payloadData.length === 0) {
-      this.logger.error('Aborting delta sync. Payload data is empty or invalid.');
+    this.logger.log(`Executing Read-DB-Sync for Hotel ID: ${hotel_id} [Scope: ${updateType.toUpperCase()}]`);
+
+    // Fetch Fresh Data from Master DB
+    let freshData: any = null;
+    if (updateType === 'hotel') {
+      freshData = await this.propertyRepo.getMasterHotel(hotel_id);
+    } else if (updateType === 'room' && room_type_id) {
+      freshData = await this.propertyRepo.getMasterRoom(room_type_id);
+    } else if (updateType === 'rate_plan' && rate_plan_id) {
+      freshData = await this.propertyRepo.getMasterRatePlan(rate_plan_id);
+    }
+
+    if (!freshData) {
+      this.logger.warn(`Aborting sync. Target data not found in Master DB for Hotel ID: ${hotel_id}`);
       return;
     }
 
-    // Extract hotel_id from the first row of payload data to act as the relational database anchor
-    const targetHotelId = payloadData[0]?.hotel_id;
+    // Gatekeeper Validation on FRESH data overlaying existing setup
+    const existingSetup = await this.setupRepo.findOne({ where: { hotel_id } }) || {};
+    const mergedContext = { ...existingSetup, ...freshData };
+    const currentStatus = this.validateGatekeeper(mergedContext);
 
-    if (!targetHotelId) {
-      this.logger.error('Aborting delta sync. No valid hotel_id found in payload data.');
-      return;
-    }
-
-    this.logger.log(`Processing delta sync for Hotel ID: ${targetHotelId}`);
-
-    for (const incomingRow of payloadData) {
-      
-      // Filter out undefined fields from partial update payload
-      const cleanIncomingData = Object.fromEntries(
-        Object.entries(incomingRow).filter(([_, v]) => v !== undefined)
-      );
-
-      // Fetch existing database rows based on the update scope
-      let existingRows: HotelConnectivitySetup[] = [];
-
-      if (updateType === 'hotel') {
-        existingRows = await this.setupRepo.find({ where: { hotel_id: targetHotelId } });
-      } else if (updateType === 'room') {
-        existingRows = await this.setupRepo.find({ 
-          where: { hotel_id: targetHotelId, room_type_id: incomingRow.room_type_id } 
-        });
-      } else if (updateType === 'rate_plan') {
-        existingRows = await this.setupRepo.find({ 
-          where: { 
-            hotel_id: targetHotelId, 
-            room_type_id: incomingRow.room_type_id, 
-            rate_plan_id: incomingRow.rate_plan_id 
-          } 
-        });
-      }
-
-      // Handle CREATE action if no existing rows are found
-      if (existingRows.length === 0) {
-        const currentStatus = this.validateGatekeeper(incomingRow);
-        await this.setupRepo.save({
-          ...incomingRow,
-          setup_status: currentStatus
-        });
-        continue;
-      }
-
-      // Handle UPDATE action by merging clean incoming fields into existing records
-      for (const oldRow of existingRows) {
-        const mergedRow = {
-          ...oldRow,
-          ...cleanIncomingData, 
-        };
-
-        // Re-evaluate data integrity status after merge
-        mergedRow.setup_status = this.validateGatekeeper(mergedRow);
-
-        // Commit changes to database
-        await this.setupRepo.save(mergedRow);
-      }
-    }
-
-    // Global Re-validation: Fetch all currently active live rows based on master numeric hotel_id
-    const currentValidRows = await this.setupRepo.find({
-      where: { hotel_id: targetHotelId, setup_status: 1 }
+    // Update the local Setup Cache
+    await this.setupRepo.save({
+      ...mergedContext,
+      setup_status: currentStatus,
     });
 
-    // Trigger real-time static data push to Google ARI
-    if (currentValidRows.length > 0) {
-      // Safely resolve the real hotel code directly from the active database row
-      const actualDbHotelCode = currentValidRows[0].hotel_code;
+    // Trigger Static Data Push to Google if Valid
+    if (currentStatus === 1) {
+      const activeRows = await this.setupRepo.find({ where: { hotel_id, setup_status: 1 } });
+      if (activeRows.length > 0) {
+        const actualDbHotelCode = activeRows[0].hotel_code;
+        
+        const hotelListXml = GoogleStaticFeedBuilder.buildHotelListFeed(activeRows);
+        const transactionXml = GoogleStaticFeedBuilder.buildTransactionMetadata(actualDbHotelCode, activeRows);
 
-      if (!actualDbHotelCode) {
-        this.logger.error(`Aborting static push for Hotel ID ${targetHotelId}. Active rows lack a valid hotel_code.`);
-        return;
+        await this.googleApiConnector.pushPayload(actualDbHotelCode, hotelListXml, 'HotelListFeed');
+        await this.googleApiConnector.pushPayload(actualDbHotelCode, transactionXml, 'TransactionMetadata');
       }
-
-      const hotelListXml = GoogleStaticFeedBuilder.buildHotelListFeed(currentValidRows);
-      const transactionXml = GoogleStaticFeedBuilder.buildTransactionMetadata(actualDbHotelCode, currentValidRows);
-
-      this.logger.log(`Executing static push for Hotel ID: ${targetHotelId} with ${currentValidRows.length} active rows`);
-      await this.googleApiConnector.pushPayload(actualDbHotelCode, hotelListXml, 'HotelListFeed');
-      await this.googleApiConnector.pushPayload(actualDbHotelCode, transactionXml, 'TransactionMetadata');
     } else {
-      this.logger.warn(`Static push aborted for Hotel ID ${targetHotelId}. No valid live rows available.`);
+      this.logger.warn(`Property sync failed Gatekeeper validation for Hotel ID: ${hotel_id}. Status set to 0.`);
+    }
+
+    // CHAIN REACTION: Trigger Calendar Sync via Centralized Service
+    if ((updateType === 'room' || updateType === 'rate_plan') && mergedContext.hotel_code) {
+      this.logger.log(`Triggering domino calendar sync for ${mergedContext.hotel_code} via unified sync service.`);
+      
+      const startDate = new Date().toISOString().split('T')[0];
+      const endDate = new Date(new Date().setDate(new Date().getDate() + 365)).toISOString().split('T')[0];
+      
+      await this.googleSyncService.syncDateRange({
+        hotelCode: mergedContext.hotel_code,
+        startDate,
+        endDate,
+        priority: 2 
+      });
     }
   }
 }
