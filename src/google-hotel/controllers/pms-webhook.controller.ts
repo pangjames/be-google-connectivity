@@ -2,7 +2,7 @@ import { Controller, Post, Body, Logger, Headers, UnauthorizedException } from '
 import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { EventHandlerService } from '../services/event-handler.service';
-import { RateChangeDto, RestrictionChangeDto } from './dtos/pms-webhook.dto';
+import { AriChangePayloadDto } from './dtos/pms-webhook.dto';
 
 @ApiTags('PMS Webhooks')
 @Controller('pms/webhook')
@@ -21,56 +21,30 @@ export class PmsWebhookController {
     }
   }
 
-  @Post('rate-change')
+  @Post('ari-change')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Receive a rate change event from PMS and push delta to Google' })
-  @ApiBody({ type: RateChangeDto })
-  async handleRateChange(
+  @ApiOperation({ summary: 'Receive price or status changes from PMS and push delta to Google via Thin Payload' })
+  @ApiBody({ type: AriChangePayloadDto })
+  async handleAriChange(
     @Headers('Authorization') authHeader: string,
-    @Body() payload: RateChangeDto,
+    @Body() payload: AriChangePayloadDto,
   ) {
     this.validateToken(authHeader);
-    this.logger.log(`Received RATE_CHANGE for hotel ${payload.hotel}`);
+    this.logger.log(`Received ARI_CHANGE trigger for hotel ${payload.hotel}`);
+    
     try {
-      await this.eventHandlerService.handleRateChange(
+      await this.eventHandlerService.handleAriChange(
         payload.hotel,
         payload.room ?? 0,
         payload.rate ?? 0,
         payload.start,
         payload.end,
-        payload.newRate ?? 0,
       );
-      return { status: 'success', message: 'Rate change processed and queued to Google' };
+      
+      return { status: 'success', message: 'ARI change event captured. Master sync pipeline triggered.' };
     } catch (error) {
-      this.logger.error('Failed to process RATE_CHANGE event', error.stack);
-      return { status: 'error', message: 'Failed to process rate change' };
-    }
-  }
-
-  @Post('restriction-change')
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Receive a restriction change event from PMS and push delta to Google' })
-  @ApiBody({ type: RestrictionChangeDto })
-  async handleRestrictionChange(
-    @Headers('Authorization') authHeader: string,
-    @Body() payload: RestrictionChangeDto,
-  ) {
-    this.validateToken(authHeader);
-    this.logger.log(`Received RESTRICTION_CHANGE for hotel ${payload.hotel}`);
-    try {
-      await this.eventHandlerService.handleRestrictionChange(
-        payload.hotel,
-        payload.room ?? 0,
-        payload.rate ?? 0,
-        payload.start,
-        payload.end,
-        payload.isOpen ?? false,
-        payload.restrictionType ?? 'master',
-      );
-      return { status: 'success', message: 'Restriction change processed and queued to Google' };
-    } catch (error) {
-      this.logger.error('Failed to process RESTRICTION_CHANGE event', error.stack);
-      return { status: 'error', message: 'Failed to process restriction change' };
+      this.logger.error(`Failed to process ARI_CHANGE event for hotel ${payload.hotel}`, error.stack);
+      return { status: 'error', message: 'Failed to process ARI change trigger' };
     }
   }
 }

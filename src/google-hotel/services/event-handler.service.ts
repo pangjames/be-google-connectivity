@@ -1,7 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectDataSource } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
-import { DataSource } from 'typeorm';
 import { Queue } from 'bullmq';
 import { GoogleSyncService } from './google-sync.service';
 import { PropertySyncReferenceDto } from '../controllers/dtos/google-connectivity.dto';
@@ -11,60 +9,32 @@ export class EventHandlerService {
   private readonly logger = new Logger(EventHandlerService.name);
 
   constructor(
-    @InjectDataSource() private readonly dataSource: DataSource,
     private readonly googleSyncService: GoogleSyncService,
     @InjectQueue('property-update-queue') private readonly propertyUpdateQueue: Queue,
   ) {}
 
   /**
-   * Captures the RATE_CHANGE event triggered by Extranet modifications.
-   * Parameter 'newRate' is preserved to prevent compiler breaking, but no DB write is performed.
-   * Downstream materializer will read the updated state from 'tb_hotel_rate_custom'.
+   * Captures the unified ARI_CHANGE event (Rates & Restrictions) triggered by PMS modifications.
+   * Eliminates dynamic JSON data dependencies by using strictly Thin Payload coordinates.
+   * Downstream materializer will fetch and process the fresh states directly from 'tb_hotel_rate_custom'.
    */
-  async handleRateChange(
+  async handleAriChange(
     hotelCode: string,
     roomTypeId: number,
     ratePlanId: number,
     startDate: string,
     endDate: string,
-    newRate: number, 
   ): Promise<void> {
     this.logger.log(
-      `Detected RATE_CHANGE on master db for ${hotelCode} (Room: ${roomTypeId}, Rate Plan: ${ratePlanId}) from ${startDate} to ${endDate}. New Rate Payload: ${newRate}`
+      `Detected ARI_CHANGE on master db for ${hotelCode} (Room: ${roomTypeId}, Rate Plan: ${ratePlanId}) from ${startDate} to ${endDate}`
     );
 
-    // Langsung lempar ke antrean sync Google tanpa melakukan query INSERT/UPDATE
+    // Instantly forward to the centralized sync service using strict date clamping & gatekeeper checks
     await this.googleSyncService.syncDateRange({
       hotelCode,
       startDate,
       endDate,
-      priority: 1,
-    });
-  }
-
-  /**
-   * Captures the RESTRICTION_CHANGE event from Extranet.
-   * Parameter 'isOpen' is preserved to maintain contract with the controller payload.
-   * Data integrity relies on the core database master change.
-   */
-  async handleRestrictionChange(
-    hotelCode: string,
-    roomTypeId: number,
-    ratePlanId: number,
-    startDate: string,
-    endDate: string,
-    isOpen: boolean, 
-    restrictionType: 'master' | 'arrival' | 'departure' = 'master',
-  ): Promise<void> {
-    this.logger.log(
-      `Detected RESTRICTION_CHANGE [${restrictionType.toUpperCase()}] for ${hotelCode} (Room: ${roomTypeId}, Rate Plan: ${ratePlanId}) from ${startDate} to ${endDate}. Is Open: ${isOpen}`
-    );
-
-    await this.googleSyncService.syncDateRange({
-      hotelCode,
-      startDate,
-      endDate,
-      priority: 1,
+      priority: 1, // High priority for live pricing and availability changes
     });
   }
 
