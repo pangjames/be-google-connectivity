@@ -1,36 +1,25 @@
-import { Controller, Post, Body, Logger, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Body, Logger, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
 import { EventHandlerService } from '../services/event-handler.service';
-import { PropertyUpdatePayloadDto } from './dtos/google-connectivity.dto'; // Sesuaikan import DTO
-
+import { PropertyUpdatePayloadDto } from './dtos/google-connectivity.dto'; 
+import { AdminAuthGuard } from '../../common/guards/admin-auth.guard';
 @ApiTags('Google Connectivity')
+@UseGuards(AdminAuthGuard)
+@ApiBearerAuth()
 @Controller('google/connectivity')
 export class GoogleConnectivityController {
   private readonly logger = new Logger(GoogleConnectivityController.name);
 
   constructor(
     private readonly eventHandlerService: EventHandlerService,
-    private readonly configService: ConfigService,
   ) {}
 
-  private validateToken(authHeader: string) {
-    const validToken = this.configService.get<string>('ADMIN_API_TOKEN', 'default-secret-token');
-    if (!authHeader || !authHeader.startsWith('Bearer ') || authHeader.split(' ')[1] !== validToken) {
-      throw new UnauthorizedException('Invalid or missing Bearer token');
-    }
-  }
-
   @Post('property-update')
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Trigger property static sync via EntityReference (Read DB Change)' })
   @ApiBody({ type: PropertyUpdatePayloadDto })
   async handlePropertyUpdate(
-    @Headers('Authorization') authHeader: string,
     @Body() payload: PropertyUpdatePayloadDto,
-  ) {
-    this.validateToken(authHeader);
-    
+  ) {    
     const { entityReference, updateType } = payload;
     this.logger.log(`Received PROPERTY_UPDATE [${updateType.toUpperCase()}] for Hotel ID ${entityReference.hotel_id}`);
     

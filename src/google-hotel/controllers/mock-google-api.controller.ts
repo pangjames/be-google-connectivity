@@ -1,8 +1,9 @@
-import { Controller, Post, Headers, Logger, Header, Param, Get, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiHeader } from '@nestjs/swagger';
+import { Controller, Post, Headers, Logger, Header, Param, Get, Req, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { type Request } from 'express'; 
 import * as fs from 'fs';
 import * as path from 'path';
+import { AdminAuthGuard } from '../../common/guards/admin-auth.guard';
 
 // Define the root directory path for storing compiled XML files
 const STORAGE_DIR = path.join(process.cwd(), 'storage-xml');
@@ -13,6 +14,8 @@ if (!fs.existsSync(STORAGE_DIR)) {
 }
 
 @ApiTags('Mock Google API')
+@UseGuards(AdminAuthGuard)
+@ApiBearerAuth()
 @Controller('mock-google-api')
 export class MockGoogleApiController {
   private readonly logger = new Logger(MockGoogleApiController.name);
@@ -21,11 +24,9 @@ export class MockGoogleApiController {
   @Header('Content-Type', 'application/xml')
   @ApiOperation({ summary: 'Simulate Google XML receiver endpoint (Multi-Type OTA Standard)' })
   @ApiParam({ name: 'hotelId', example: 'CODE12345', required: true })
-  @ApiHeader({ name: 'authorization', example: '', required: true })
   async mockReceiver(
     @Param('hotelId') hotelId: string,
     @Req() req: Request, 
-    @Headers('authorization') authHeader: string
   ) {
     this.logger.log(`====== GOOGLE MOCK RECEIVER TRIGGERED ======`);
     
