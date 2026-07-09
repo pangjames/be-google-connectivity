@@ -9,10 +9,18 @@ export class CalendarMaterializerService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
-   * Materializes the complex relational data into the flat tb_hotel_calendar_inventory table.
+   * Materializes the complex relational data into the flat tb_hotel_calendar_inventory table
+   * using a Database Transaction to ensure atomicity (all-or-nothing).
    */
   async materialize(hotelCode: string, startDate: string, endDate: string): Promise<void> {
     this.logger.log(`Materializing calendar for hotel ${hotelCode} from ${startDate} to ${endDate}`);
+
+    // Inisialisasi QueryRunner
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    
+    // TRANSAKSI
+    await queryRunner.startTransaction();
 
     const query = `
       INSERT INTO tb_hotel_calendar_inventory (
@@ -64,11 +72,24 @@ export class CalendarMaterializerService {
     `;
 
     try {
-      await this.dataSource.query(query, [startDate, endDate, hotelCode]);
+      // Eksekusi query queryRunner
+      await queryRunner.query(query, [startDate, endDate, hotelCode]);
+      
+      // Sukses, simpan permanen (COMMIT)
+      await queryRunner.commitTransaction();
       this.logger.log(`Successfully materialized calendar for ${hotelCode}`);
+
     } catch (error) {
-      this.logger.error(`Failed to materialize calendar for ${hotelCode}`, error.stack);
+      // Gagal (misal koneksi putus/syntax error), batalkan semua perubahan (ROLLBACK)
+      this.logger.error(`Failed to materialize calendar for ${hotelCode}. Rolling back transaction.`, error.stack);
+      await queryRunner.rollbackTransaction();
+      
+      // Lempar error ke BullMQ agar fitur Auto-Retry dan DLQ berjalan
       throw error;
+      
+    } finally {
+      // Lepaskan koneksi dari pool memori agar tidak terjadi kebocoran (Memory Leak)
+      await queryRunner.release();
     }
   }
 }

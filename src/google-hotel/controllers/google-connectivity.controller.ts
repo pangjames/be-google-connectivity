@@ -3,7 +3,8 @@ import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { EventHandlerService } from '../services/event-handler.service';
 import { PropertyUpdatePayloadDto } from './dtos/google-connectivity.dto'; 
 import { AdminAuthGuard } from '../../common/guards/admin-auth.guard';
-@ApiTags('Google Connectivity')
+
+@ApiTags('Property')
 @UseGuards(AdminAuthGuard)
 @ApiBearerAuth()
 @Controller('google/connectivity')

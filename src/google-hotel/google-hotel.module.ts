@@ -9,6 +9,7 @@ import { HotelRateCustom } from '../common/entities/hotel-rate-custom.entity';
 import { HotelCalendarInventory } from '../common/entities/hotel-calendar-inventory.entity';
 import { HotelConnectivitySetup } from '../common/entities/hotel-connectivity-setup.entity';
 
+
 import { CalendarMaterializerService } from './services/calendar-materializer.service';
 import { CalendarRepositoryService } from './services/calendar-repository.service';
 import { PropertyRepositoryService } from './services/property-repository.service'; 
@@ -46,6 +47,7 @@ import { MockGoogleApiController } from './controllers/mock-google-api.controlle
     ),
   ],
   controllers: [GoogleSyncController, PmsWebhookController,GoogleConnectivityController,MockGoogleApiController],
+  /*controllers: [GoogleSyncController, PmsWebhookController,GoogleConnectivityController,PromotionController,MockGoogleApiController],*/
   providers: [
     CalendarMaterializerService,
     CalendarRepositoryService,
