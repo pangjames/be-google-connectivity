@@ -1,93 +1,64 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { HotelConnectivitySetup } from '../../common/entities/hotel-connectivity-setup.entity';
-import { SyncDateRangeOptions } from '../interfaces/google-ari.interfaces';
+import { ConfigService } from '@nestjs/config';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { GoogleAriSyncConsumer } from '../consumers/google-ari-sync.consumer';
 
 @Injectable()
 export class GoogleSyncService {
   private readonly logger = new Logger(GoogleSyncService.name);
+  private sqsClient: SQSClient;
+  private readonly useMock: boolean;
 
   constructor(
-    @InjectQueue('google-sync') private syncQueue: Queue,
-    @InjectRepository(HotelConnectivitySetup)
-    private readonly setupRepo: Repository<HotelConnectivitySetup>
-  ) {}
-
-  /**
-   * The unified entry point for syncing ARI to Google.
-   */
-  async syncDateRange(options: SyncDateRangeOptions) {
-    // Gatekeeper Action: Abort if static configuration is invalid or incomplete
-    const activeSetup = await this.setupRepo.findOne({
-      where: { hotel_code: options.hotelCode, setup_status: 1 }
-    });
-
-    if (!activeSetup) {
-      this.logger.warn(`Sync skipped for ${options.hotelCode} due to invalid static setup_status`);
-      return { message: 'Sync aborted. Property data structure is invalid or incomplete.', status: 'blocked' };
-    }
-
-    // Deterministic Job ID to avoid chittering (duplicate jobs within a small window)
-    const { hotelCode, startDate, endDate } = this.clampDateRange(options);
-    const jobId = `sync-${hotelCode}-${startDate}-${endDate}`;
-
-    this.logger.log(`Queueing sync for ${hotelCode} from ${startDate} to ${endDate}`);
-
-    await this.syncQueue.add(
-      'push-ari',
-      {
-        hotelCode,
-        startDate,
-        endDate,
-      },
-      {
-        jobId,
-        priority: options.priority || 5, // Default to 5
-        removeOnComplete: true,
-        removeOnFail: false,
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 5000,
+    private configService: ConfigService,
+    private readonly googleAriSyncConsumer: GoogleAriSyncConsumer,
+  ) {
+    this.useMock = this.configService.get<string>('USE_MOCK_SQS') === 'true' || this.configService.get<string>('USE_SQS_MOCK') === 'true';
+    if (!this.useMock) {
+      this.sqsClient = new SQSClient({
+        region: this.configService.get<string>('AWS_REGION')!,
+        credentials: {
+          accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID')!,
+          secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY')!,
         },
-      },
-    );
-
-    return { message: 'Sync job queued successfully', jobId };
+      });
+    }
   }
 
-  /**
-   * Enforces the 365-day rolling window limit.
-   */
-  private clampDateRange(options: SyncDateRangeOptions): SyncDateRangeOptions {
-    const start = new Date(options.startDate);
-    const end = new Date(options.endDate);
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const maxHorizon = new Date(today);
-    maxHorizon.setDate(today.getDate() + 365);
+  async syncDateRange(
+    hotelCode: string, 
+    startDate: string, 
+    endDate: string, 
+    roomTypeId?: number, 
+    ratePlanId?: number,
+    updateType: string = 'FULL_SYNC'
+  ) {
+    const payload = { hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType };
 
-    let finalStart = start;
-    let finalEnd = end;
-
-    if (start < today) {
-      finalStart = today;
+    if (this.useMock) {
+      this.logger.log(`[SQS MOCK SYNC] Triggering sync for ${hotelCode} | Type: ${updateType}`);
+      const mockMessage = {
+        Body: JSON.stringify(payload),
+        MessageId: `mock-${Date.now()}`,
+      };
+      setImmediate(async () => {
+        try {
+          await this.googleAriSyncConsumer.handleBatchMessages([mockMessage as any]);
+        } catch (err) {
+          this.logger.error(`[SQS MOCK ERROR] Failed mock message for ${hotelCode}`, err);
+        }
+      });
+      return;
     }
-    
-    if (end > maxHorizon) {
-      finalEnd = maxHorizon;
-    }
 
-    return {
-      hotelCode: options.hotelCode,
-      startDate: finalStart.toISOString().split('T')[0],
-      endDate: finalEnd.toISOString().split('T')[0],
-      priority: options.priority,
-    };
+    const command = new SendMessageCommand({
+      QueueUrl: this.configService.get('AWS_SQS_SYNC_QUEUE_URL')!,
+      MessageBody: JSON.stringify(payload),
+      MessageGroupId: hotelCode, // Tetap gunakan hotelCode untuk jaminan antrean per hotel
+      MessageDeduplicationId: `${hotelCode}-${startDate}-${endDate}-${roomTypeId || 0}-${ratePlanId || 0}-${Date.now()}`,
+    });
+
+    await this.sqsClient.send(command);
+    this.logger.log(`Sync queued for ${hotelCode} (SQS) - Type: ${updateType}`);
   }
 }

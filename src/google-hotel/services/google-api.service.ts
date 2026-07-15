@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
 @Injectable()
-export class GoogleApiClientService {
-  private readonly logger = new Logger(GoogleApiClientService.name);
+export class GoogleApiService {
+  private readonly logger = new Logger(GoogleApiService.name);
   private readonly apiUrl: string;
   private readonly authToken: string;
 
@@ -39,7 +39,7 @@ export class GoogleApiClientService {
       }
     } catch (error) {
       this.logger.error(`Failed to push ${messageType} for ${hotelCode}`, error.message);
-      // Depending on the error, we might want to throw to let BullMQ retry
+      // Depending on the error, we might want to throw to let SQS retry
       throw error;
     }
   }

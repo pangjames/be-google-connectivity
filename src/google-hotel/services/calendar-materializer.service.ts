@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 
 @Injectable()
 export class CalendarMaterializerService {
@@ -12,15 +12,39 @@ export class CalendarMaterializerService {
    * Materializes the complex relational data into the flat tb_hotel_calendar_inventory table
    * using a Database Transaction to ensure atomicity (all-or-nothing).
    */
-  async materialize(hotelCode: string, startDate: string, endDate: string): Promise<void> {
+  async materialize(
+    hotelCode: string, 
+    startDate: string, 
+    endDate: string,
+    queryRunner?: QueryRunner,
+    roomTypeId?: number,
+    ratePlanId?: number
+  ): Promise<void> {
     this.logger.log(`Materializing calendar for hotel ${hotelCode} from ${startDate} to ${endDate}`);
 
-    // Inisialisasi QueryRunner
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    
-    // TRANSAKSI
-    await queryRunner.startTransaction();
+    let localQueryRunner = false;
+    let qr = queryRunner;
+
+    if (!qr) {
+      // Inisialisasi QueryRunner lokal jika tidak disediakan dari luar
+      qr = this.dataSource.createQueryRunner();
+      await qr.connect();
+      await qr.startTransaction();
+      localQueryRunner = true;
+    }
+
+    let filterConditions = "";
+    const queryParams: any[] = [startDate, endDate, hotelCode];
+
+    // Tambahkan filter spesifik jika ID tersedia
+    if (roomTypeId) {
+      filterConditions += " AND rt.id = ?";
+      queryParams.push(roomTypeId);
+    }
+    if (ratePlanId) {
+      filterConditions += " AND rp.id = ?";
+      queryParams.push(ratePlanId);
+    }
 
     const query = `
       INSERT INTO tb_hotel_calendar_inventory (
@@ -61,7 +85,7 @@ export class CalendarMaterializerService {
       CROSS JOIN date_range dr
       LEFT JOIN tb_hotel_rate_custom rc
         ON rc.rate_plan_id = rp.id AND rc.date = dr.date
-      WHERE th.code = ?
+      WHERE th.code = ? ${filterConditions}
       ON DUPLICATE KEY UPDATE
         total_amount_after_tax = VALUES(total_amount_after_tax),
         inv_count = VALUES(inv_count),
@@ -72,24 +96,30 @@ export class CalendarMaterializerService {
     `;
 
     try {
-      // Eksekusi query queryRunner
-      await queryRunner.query(query, [startDate, endDate, hotelCode]);
+      // Eksekusi query menggunakan runner yang aktif
+      await qr.query(query, queryParams);
       
-      // Sukses, simpan permanen (COMMIT)
-      await queryRunner.commitTransaction();
-      this.logger.log(`Successfully materialized calendar for ${hotelCode}`);
+      if (localQueryRunner) {
+        // Sukses, simpan permanen (COMMIT) jika dibuat secara lokal
+        await qr.commitTransaction();
+        this.logger.log(`Successfully materialized calendar for ${hotelCode}`);
+      }
 
     } catch (error) {
-      // Gagal (misal koneksi putus/syntax error), batalkan semua perubahan (ROLLBACK)
       this.logger.error(`Failed to materialize calendar for ${hotelCode}. Rolling back transaction.`, error.stack);
-      await queryRunner.rollbackTransaction();
+      if (localQueryRunner) {
+        // Gagal, batalkan semua perubahan (ROLLBACK) jika dibuat secara lokal
+        await qr.rollbackTransaction();
+      }
       
-      // Lempar error ke BullMQ agar fitur Auto-Retry dan DLQ berjalan
+      // Lempar error agar fitur Auto-Retry dan DLQ pada SQS berjalan
       throw error;
       
     } finally {
-      // Lepaskan koneksi dari pool memori agar tidak terjadi kebocoran (Memory Leak)
-      await queryRunner.release();
+      if (localQueryRunner) {
+        // Lepaskan koneksi dari pool memori jika dibuat secara lokal
+        await qr.release();
+      }
     }
   }
 }

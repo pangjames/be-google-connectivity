@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryRunner } from 'typeorm';
 import { HotelCalendarInventory } from '../../common/entities/hotel-calendar-inventory.entity';
 import { HotelRoomType } from '../../common/entities/hotel-room-type.entity';
 import { HotelRatePlan } from '../../common/entities/hotel-rate-plan.entity';
@@ -20,9 +20,15 @@ export class CalendarRepositoryService {
     hotelCode: string,
     startDate: string,
     endDate: string,
+    queryRunner?: QueryRunner,
+    roomTypeId?: number,
+    ratePlanId?: number
   ): Promise<any[]> { // returning any to include dynamically joined capacity
-    return this.calendarRepo.createQueryBuilder('c')
-      .leftJoin('tb_hotel_room_type', 'rt', 'c.room_type_id = rt.id')
+    const qb = queryRunner
+      ? queryRunner.manager.createQueryBuilder(HotelCalendarInventory, 'c')
+      : this.calendarRepo.createQueryBuilder('c');
+
+    qb.leftJoin('tb_hotel_room_type', 'rt', 'c.room_type_id = rt.id')
       .select([
         'c.hotel_code as hotel_code',
         'c.room_type_id as room_type_id',
@@ -37,7 +43,16 @@ export class CalendarRepositoryService {
         'rt.guest as capacity'
       ])
       .where('c.hotel_code = :hotelCode', { hotelCode })
-      .andWhere('c.date BETWEEN :startDate AND :endDate', { startDate, endDate })
+      .andWhere('c.date BETWEEN :startDate AND :endDate', { startDate, endDate });
+
+    if (roomTypeId) {
+      qb.andWhere('c.room_type_id = :roomTypeId', { roomTypeId });
+    }
+    if (ratePlanId) {
+      qb.andWhere('c.rate_plan_id = :ratePlanId', { ratePlanId });
+    }
+
+    return qb
       .orderBy('c.date', 'ASC')
       .addOrderBy('c.room_type_id', 'ASC')
       .addOrderBy('c.rate_plan_id', 'ASC')

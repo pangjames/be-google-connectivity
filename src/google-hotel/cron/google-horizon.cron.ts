@@ -19,7 +19,6 @@ export class GoogleHorizonCron {
     private readonly configService: ConfigService,
   ) {}
 
-  // Run nightly at 01:00 AM
   @Cron('0 1 * * *')
   async handleCron() {
     this.logger.log('Starting nightly Google Horizon Cron (Rolling Horizon Extension)');
@@ -56,29 +55,22 @@ export class GoogleHorizonCron {
         
         let startDate: Date;
         if (!currentMaxDate) {
-          // Initial sync
           startDate = today;
-          this.logger.log(`Initial sync for ${hotel.code} (No data). Horizon: ${maxHorizonMonths} months`);
+          this.logger.log(`Initial sync for ${hotel.code}. Horizon: ${maxHorizonMonths} months`);
         } else {
-          // Rolling extension
           if (currentMaxDate >= targetMaxDate) {
             this.logger.log(`Horizon already extended for ${hotel.code}. Skipping.`);
             return;
           }
           startDate = new Date(currentMaxDate);
           startDate.setDate(startDate.getDate() + 1);
-          this.logger.log(`Extending horizon for ${hotel.code} from ${startDate.toISOString().split('T')[0]} to ${targetMaxDate.toISOString().split('T')[0]}`);
         }
 
         const startStr = startDate.toISOString().split('T')[0];
         const endStr = targetMaxDate.toISOString().split('T')[0];
 
-        await this.googleSyncService.syncDateRange({
-          hotelCode: hotel.code,
-          startDate: startStr,
-          endDate: endStr,
-          priority: 10, // Low priority for nightly batch
-        });
+        // PERBAIKAN: Mengirim 3 argumen sesuai dengan definisi service baru
+        await this.googleSyncService.syncDateRange(hotel.code, startStr, endStr);
         
         this.logger.log(`Queued horizon sync for ${hotel.code}`);
       } catch (error) {
