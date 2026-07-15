@@ -33,9 +33,9 @@ export class GoogleDispatcherService {
    */
   async dispatchSyncCommand(
     updateType: string,
-    entityReference: { hotel_id: any; room_type_id?: any; rate_plan_id?: any }
+    entityReference: { hotelId: any; roomId?: any; rateId?: any }
   ) {
-    const hotelCode = entityReference.hotel_id;
+    const hotelCode = entityReference.hotelId;
 
     if (this.useMock) {
       this.logger.log(`[SQS MOCK DISPATCH] Directly invoking PropertySyncConsumer for hotel: ${hotelCode}, type: ${updateType}`);

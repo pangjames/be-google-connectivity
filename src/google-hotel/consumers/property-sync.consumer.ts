@@ -18,7 +18,7 @@ export class PropertySyncConsumer {
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
       const { entityReference, updateType } = JSON.parse(message.Body as string);
-      const hotelId = entityReference?.hotel_id;
+      const hotelId = entityReference?.hotelId;
 
       const queryRunner = this.dataSource.createQueryRunner();
       await queryRunner.connect();

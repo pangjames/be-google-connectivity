@@ -32,7 +32,7 @@ export class GoogleAriSyncConsumer {
     for (const message of messages) {
       // 1. Ekstrak payload mentah dari SQS
       const payload = JSON.parse(message.Body as string);
-      const { hotelCode, roomTypeId, ratePlanId, updateType } = payload;
+      const { hotelCode, roomId, rateId, updateType } = payload;
       
       // 2. Fallback handling untuk menyelaraskan parameter tanggal tunggal (Delta Sync)
       const startDate = payload.startDate || payload.date;
@@ -58,10 +58,10 @@ export class GoogleAriSyncConsumer {
           .getOne();
 
         // 2. Materialize dengan parameter opsional
-        await this.materializer.materialize(hotelCode, startDate, endDate, queryRunner, roomTypeId, ratePlanId);
+        await this.materializer.materialize(hotelCode, startDate, endDate, queryRunner, roomId, rateId);
         
         // 3. Ambil data hasil materialisasi
-        const inventories = await this.calendarRepo.getInventoriesForDateRange(hotelCode, startDate, endDate, queryRunner, roomTypeId, ratePlanId);
+        const inventories = await this.calendarRepo.getInventoriesForDateRange(hotelCode, startDate, endDate, queryRunner, roomId, rateId);
         
         // 4. Push ke Google dengan Rate Limiter
         if (inventories?.length > 0) {

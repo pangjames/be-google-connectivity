@@ -28,19 +28,19 @@ export class PropertyMaterializerService {
     updateType: string,
     queryRunner: QueryRunner
   ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number }> {
-    const hotelId = entityReference?.hotel_id;
+    const hotelId = entityReference?.hotelId;
     if (!hotelId) {
-      throw new Error("hotel_id wajib diisi");
+      throw new Error("hotelId wajib diisi");
     }
 
     // --- VALIDASI TAMBAHAN BERDASARKAN TIPE ---
-    if (updateType === 'ROOM_UPDATE' && !entityReference.room_type_id) {
-      throw new Error("ROOM_UPDATE wajib menyertakan room_type_id");
+    if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) {
+      throw new Error("ROOM_UPDATE wajib menyertakan roomId");
     }
 
     if (updateType === 'RATE_PLAN_UPDATE') {
-      if (!entityReference.room_type_id || !entityReference.rate_plan_id) {
-        throw new Error("RATE_PLAN_UPDATE wajib menyertakan room_type_id dan rate_plan_id");
+      if (!entityReference.roomId || !entityReference.rateId) {
+        throw new Error("RATE_PLAN_UPDATE wajib menyertakan roomId dan rateId");
       }
     }
 
@@ -61,17 +61,17 @@ export class PropertyMaterializerService {
     }
 
     // 2. Kunci / Validasi Entitas Turunan
-    if (entityReference.room_type_id) {
-      const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.room_type_id } });
+    if (entityReference.roomId) {
+      const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.roomId } });
       if (!room) {
-        throw new Error(`Room Type dengan ID ${entityReference.room_type_id} tidak ditemukan`);
+        throw new Error(`Room Type dengan ID ${entityReference.roomId} tidak ditemukan`);
       }
     }
 
-    if (entityReference.rate_plan_id) {
-      const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rate_plan_id } });
+    if (entityReference.rateId) {
+      const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rateId } });
       if (!ratePlan) {
-        throw new Error(`Rate Plan dengan ID ${entityReference.rate_plan_id} tidak ditemukan`);
+        throw new Error(`Rate Plan dengan ID ${entityReference.rateId} tidak ditemukan`);
       }
     }
 
@@ -80,11 +80,8 @@ export class PropertyMaterializerService {
 
     if (!isComplete) {
       this.logger.warn(`[GATEKEEPER] Data hotel ${hotel.code} (ID: ${hotelId}) TIDAK LENGKAP! Mengunci akun (status = 0).`);
-      await manager.update(
-        'tb_hotel_connectivity_setup', 
-        { hotel_code: hotel.code }, 
-        { setup_status: 0 }
-      );
+      hotel.status = 0;
+      await manager.save(Hotel, hotel);
       return { shouldPush: false, hotelCode: hotel.code, flatData: [] };
     }
 
@@ -107,8 +104,8 @@ export class PropertyMaterializerService {
       shouldPush: true, 
       hotelCode: hotel.code, 
       flatData,
-      roomTypeId: entityReference.room_type_id,
-      ratePlanId: entityReference.rate_plan_id
+      roomTypeId: entityReference.roomId,
+      ratePlanId: entityReference.rateId
     };
   }
 

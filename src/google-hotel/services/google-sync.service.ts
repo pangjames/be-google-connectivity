@@ -29,11 +29,11 @@ export class GoogleSyncService {
     hotelCode: string, 
     startDate: string, 
     endDate: string, 
-    roomTypeId?: number, 
-    ratePlanId?: number,
+    roomId?: number, 
+    rateId?: number,
     updateType: string = 'FULL_SYNC'
   ) {
-    const payload = { hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType };
+    const payload = { hotelCode, startDate, endDate, roomId, rateId, updateType };
 
     if (this.useMock) {
       this.logger.log(`[SQS MOCK SYNC] Triggering sync for ${hotelCode} | Type: ${updateType}`);
@@ -55,7 +55,7 @@ export class GoogleSyncService {
       QueueUrl: this.configService.get('AWS_SQS_SYNC_QUEUE_URL')!,
       MessageBody: JSON.stringify(payload),
       MessageGroupId: hotelCode, // Tetap gunakan hotelCode untuk jaminan antrean per hotel
-      MessageDeduplicationId: `${hotelCode}-${startDate}-${endDate}-${roomTypeId || 0}-${ratePlanId || 0}-${Date.now()}`,
+      MessageDeduplicationId: `${hotelCode}-${startDate}-${endDate}-${roomId || 0}-${rateId || 0}-${Date.now()}`,
     });
 
     await this.sqsClient.send(command);
