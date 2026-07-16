@@ -75,11 +75,18 @@ export class PropertyMaterializerService {
       }
     }
 
-    // 3. Gatekeeper: Validasi kelengkapan data vital hotel
-    const isComplete = this.validateHotelCompleteness(hotel);
+    // 3. Gatekeeper: Validasi kelengkapan data menggunakan data dari tb_hotel_connectivity_setup
+    const flatData = await manager.query(
+      `SELECT * FROM tb_hotel_connectivity_setup WHERE hotel_code = ?`,
+      [hotel.code]
+    );
 
-    if (!isComplete) {
-      this.logger.warn(`[GATEKEEPER] Data hotel ${hotel.code} (ID: ${hotelId}) TIDAK LENGKAP! Mengunci akun (status = 0).`);
+    const row = flatData[0];
+    const status = this.validateGatekeeper(row);
+
+    if (status === 0) {
+      this.logger.warn(`[GATEKEEPER] Data hotel ${hotel.code} TIDAK LENGKAP! Mengunci akun (status = 0).`);
+      
       await manager.update(
         'tb_hotel_connectivity_setup', 
         { hotel_code: hotel.code }, 
@@ -87,6 +94,13 @@ export class PropertyMaterializerService {
       );
       return { shouldPush: false, hotelCode: hotel.code, flatData: [] };
     }
+
+    // Jika valid, pastikan status di DB = 1
+    await manager.update(
+      'tb_hotel_connectivity_setup', 
+      { hotel_code: hotel.code }, 
+      { setup_status: 1 }
+    );
 
     this.logger.log(`[GATEKEEPER PASSED] Hotel ${hotel.code} valid. Memproses DB update untuk: ${updateType}`);
 
@@ -97,8 +111,8 @@ export class PropertyMaterializerService {
       this.logger.log(`[PROPERTY DB UPDATE] Struktur Rate Plan diperbarui di DB untuk hotel: ${hotel.code}`);
     }
 
-    // Ambil data dari snapshot connectivity setup
-    const flatData = await manager.query(
+    // Ambil data aktif dari snapshot connectivity setup
+    const activeFlatData = await manager.query(
       `SELECT * FROM tb_hotel_connectivity_setup WHERE hotel_code = ? AND setup_status = 1`,
       [hotel.code]
     );
@@ -106,7 +120,7 @@ export class PropertyMaterializerService {
     return { 
       shouldPush: true, 
       hotelCode: hotel.code, 
-      flatData,
+      flatData: activeFlatData,
       roomTypeId: entityReference.roomId,
       ratePlanId: entityReference.rateId
     };
@@ -145,14 +159,32 @@ export class PropertyMaterializerService {
     }
   }
 
-  private validateHotelCompleteness(hotel: Hotel): boolean {
-    if (!hotel.latitude || hotel.latitude.trim() === '') return false;
-    if (!hotel.longitude || hotel.longitude.trim() === '') return false;
-    if (!hotel.name || hotel.name.trim() === '') return false;
-    if (!hotel.street_address || hotel.street_address.trim() === '') return false;
-    if (!hotel.phone || hotel.phone.trim() === '') return false;
-    if (!hotel.region || hotel.region.trim() === '') return false;
-    
-    return true;
+  private validateGatekeeper(row: any): number {
+    if (!row) return 0;
+
+    // 1. Hotel Profile Validation
+    const requiredHotelFields = ['hotel_code', 'hotel_name', 'street_address', 'city', 'province', 'phone'];
+    if (requiredHotelFields.some(field => !row[field] || row[field].toString().trim() === '')) {
+      return 0;
+    }
+
+    // 2. Geo-coordinates Validation
+    const lat = parseFloat(row.latitude);
+    const lng = parseFloat(row.longitude);
+    if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+      return 0;
+    }
+
+    // 3. Room Type Validation
+    if (!row.room_type_id || !row.room_type_name || Number(row.room_capacity) <= 0) {
+      return 0;
+    }
+
+    // 4. Rate Plan Validation
+    if (!row.rate_plan_id || !row.rate_plan_name) {
+      return 0;
+    }
+
+    return 1;
   }
 }
