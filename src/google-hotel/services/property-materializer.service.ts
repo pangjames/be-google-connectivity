@@ -80,8 +80,11 @@ export class PropertyMaterializerService {
 
     if (!isComplete) {
       this.logger.warn(`[GATEKEEPER] Data hotel ${hotel.code} (ID: ${hotelId}) TIDAK LENGKAP! Mengunci akun (status = 0).`);
-      hotel.status = 0;
-      await manager.save(Hotel, hotel);
+      await manager.update(
+        'tb_hotel_connectivity_setup', 
+        { hotel_code: hotel.code }, 
+        { setup_status: 0 }
+      );
       return { shouldPush: false, hotelCode: hotel.code, flatData: [] };
     }
 
