@@ -21,7 +21,8 @@ export class PropertyMaterializerService {
 
   /**
    * 1. Database logic: Lock, validation, DB updates.
-   * Runs entirely inside the database transaction (does not make external HTTP/API calls).
+   * Runs entirely inside the database transaction (ensures atomicity).
+   * External HTTP/API calls are deliberately excluded to avoid holding database locks.
    */
   async handleExtranetDeltaUpdate(
     entityReference: any,
@@ -30,17 +31,17 @@ export class PropertyMaterializerService {
   ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number }> {
     const hotelId = entityReference?.hotelId;
     if (!hotelId) {
-      throw new Error("hotelId wajib diisi");
+      throw new Error("hotelId is mandatory");
     }
 
-    // --- VALIDASI TAMBAHAN BERDASARKAN TIPE ---
+    // --- TYPE-SPECIFIC VALIDATION ---
     if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) {
-      throw new Error("ROOM_UPDATE wajib menyertakan roomId");
+      throw new Error("ROOM_UPDATE requires roomId");
     }
 
     if (updateType === 'RATE_PLAN_UPDATE') {
       if (!entityReference.roomId || !entityReference.rateId) {
-        throw new Error("RATE_PLAN_UPDATE wajib menyertakan roomId dan rateId");
+        throw new Error("RATE_PLAN_UPDATE requires both roomId and rateId");
       }
     }
 
@@ -48,7 +49,7 @@ export class PropertyMaterializerService {
 
     const manager = queryRunner.manager;
 
-    // 1. Ambil data hotel dari master database (mendukung id numeric maupun code string)
+    // 1. Retrieve hotel record from master database (supports numeric ID or string code)
     let hotel: Hotel | null;
     if (typeof hotelId === 'number') {
       hotel = await manager.findOne(Hotel, { where: { id: hotelId } });
@@ -57,35 +58,35 @@ export class PropertyMaterializerService {
     }
 
     if (!hotel) {
-      throw new Error(`Hotel tidak ditemukan untuk ID/Code: ${hotelId}`);
+      throw new Error(`Hotel not found for ID/Code: ${hotelId}`);
     }
 
-    // 2. Kunci / Validasi Entitas Turunan
+    // 2. Validate/Lock child entities
     if (entityReference.roomId) {
       const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.roomId } });
       if (!room) {
-        throw new Error(`Room Type dengan ID ${entityReference.roomId} tidak ditemukan`);
+        throw new Error(`Room Type with ID ${entityReference.roomId} not found`);
       }
     }
 
     if (entityReference.rateId) {
       const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rateId } });
       if (!ratePlan) {
-        throw new Error(`Rate Plan dengan ID ${entityReference.rateId} tidak ditemukan`);
+        throw new Error(`Rate Plan with ID ${entityReference.rateId} not found`);
       }
     }
 
-    // 3. Gatekeeper: Validasi kelengkapan data menggunakan data dari tb_hotel_connectivity_setup
+    // 3. Gatekeeper: Validate completeness using tb_hotel_connectivity_setup snapshot
     const flatData = await manager.query(
       `SELECT * FROM tb_hotel_connectivity_setup WHERE hotel_code = ?`,
       [hotel.code]
     );
 
-    const row = flatData[0];
-    const status = this.validateGatekeeper(row);
+    // Verify if all required setup records are valid (must be strictly complete)
+    const isAllValid = flatData.length > 0 && flatData.every((row: any) => this.validateGatekeeper(row) === 1);
 
-    if (status === 0) {
-      this.logger.warn(`[GATEKEEPER] Data hotel ${hotel.code} TIDAK LENGKAP! Mengunci akun (status = 0).`);
+    if (!isAllValid) {
+      this.logger.warn(`[GATEKEEPER] Hotel ${hotel.code} validation failed: Profile/Room/Rate data is incomplete.`);
       
       await manager.update(
         'tb_hotel_connectivity_setup', 
@@ -95,23 +96,23 @@ export class PropertyMaterializerService {
       return { shouldPush: false, hotelCode: hotel.code, flatData: [] };
     }
 
-    // Jika valid, pastikan status di DB = 1
+    // Mark as valid/live if all records pass validation
     await manager.update(
       'tb_hotel_connectivity_setup', 
       { hotel_code: hotel.code }, 
       { setup_status: 1 }
     );
 
-    this.logger.log(`[GATEKEEPER PASSED] Hotel ${hotel.code} valid. Memproses DB update untuk: ${updateType}`);
+    this.logger.log(`[GATEKEEPER PASSED] Hotel ${hotel.code} is valid. Proceeding with DB updates.`);
 
-    // 4. Proses DB update jika ada
+    // 4. Perform DB updates based on updateType
     if (updateType === 'ROOM_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Struktur Kamar diperbarui di DB untuk hotel: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Room structure updated for hotel: ${hotel.code}`);
     } else if (updateType === 'RATE_PLAN_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Struktur Rate Plan diperbarui di DB untuk hotel: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Rate Plan structure updated for hotel: ${hotel.code}`);
     }
 
-    // Ambil data aktif dari snapshot connectivity setup
+    // Fetch active snapshots for external synchronization
     const activeFlatData = await manager.query(
       `SELECT * FROM tb_hotel_connectivity_setup WHERE hotel_code = ? AND setup_status = 1`,
       [hotel.code]
@@ -127,8 +128,8 @@ export class PropertyMaterializerService {
   }
 
   /**
-   * 2. API logic: Pushes profile feeds to Google and triggers Domino ARI if needed.
-   * Executed AFTER the database transaction is committed to prevent holding locks during network latency.
+   * 2. API logic: Pushes profile feeds to Google and triggers ARI synchronization if necessary.
+   * Executed AFTER the database transaction is committed to prevent blocking during network latency.
    */
   async executeExternalPush(
     hotelCode: string, 
@@ -137,7 +138,7 @@ export class PropertyMaterializerService {
     roomTypeId?: number,
     ratePlanId?: number
   ): Promise<void> {
-    // 1. Kirim ListFeed & Transaction (Static profile) ke Google
+    // 1. Send ListFeed & Transaction (Static profile) to Google
     if (flatData && flatData.length > 0) {
       this.logger.log(`[STATIC PUSH] Generating static profile feeds for hotel: ${hotelCode}`);
       const hotelListFeedXml = GoogleStaticFeedBuilder.buildHotelListFeed(flatData);
@@ -146,45 +147,47 @@ export class PropertyMaterializerService {
       await this.googleApiService.pushPayload(hotelCode, hotelListFeedXml, 'ListFeed');
       await this.googleApiService.pushPayload(hotelCode, transactionMetadataXml, 'Transaction');
     } else {
-      this.logger.warn(`[STATIC PUSH] Tidak ada data di tb_hotel_connectivity_setup untuk hotel: ${hotelCode}. Melewati push static.`);
+      this.logger.warn(`[STATIC PUSH] No data found in tb_hotel_connectivity_setup for ${hotelCode}. Skipping static push.`);
     }
 
-    // 2. Efek Domino: Jika Room/Rate berubah (bukan HOTEL_UPDATE), otomatis memicu alur ARI 365 hari ke depan
+    // 2. Domino Effect: If Room/Rate updates occur, trigger 365-day ARI synchronization
     if (updateType !== 'HOTEL_UPDATE') {
       const startDate = new Date().toISOString().split('T')[0];
       const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       
-      this.logger.log(`[DOMINO EFFECT] Pemicu sinkronisasi ARI 365 hari untuk hotel: ${hotelCode} dari ${startDate} ke ${endDate}`);
+      this.logger.log(`[DOMINO EFFECT] Triggering 365-day ARI sync for ${hotelCode} from ${startDate} to ${endDate}`);
       await this.googleSyncService.syncDateRange(hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType);
     }
   }
 
+  /**
+   * Strict validation gate: Ensures mandatory hotel profile, location, room, and rate information 
+   * are provided before marking the hotel as 'live'.
+   */
   private validateGatekeeper(row: any): number {
     if (!row) return 0;
 
     // 1. Hotel Profile Validation
-    const requiredHotelFields = ['hotel_code', 'hotel_name', 'street_address', 'city', 'province', 'phone'];
-    if (requiredHotelFields.some(field => !row[field] || row[field].toString().trim() === '')) {
-      return 0;
-    }
-
+    const hotelFields = ['hotel_code', 'hotel_name', 'street_address', 'city', 'province', 'phone'];
+    const isHotelValid = hotelFields.every(field => row[field] && row[field].toString().trim() !== '');
+    
     // 2. Geo-coordinates Validation
     const lat = parseFloat(row.latitude);
     const lng = parseFloat(row.longitude);
-    if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
-      return 0;
-    }
+    const isGeoValid = !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
 
     // 3. Room Type Validation
-    if (!row.room_type_id || !row.room_type_name || Number(row.room_capacity) <= 0) {
-      return 0;
-    }
+    const isRoomValid = row.room_type_id && 
+                        row.room_type_name && 
+                        row.room_type_name.toString().trim() !== '' && 
+                        Number(row.room_capacity) > 0;
 
     // 4. Rate Plan Validation
-    if (!row.rate_plan_id || !row.rate_plan_name) {
-      return 0;
-    }
+    const isRateValid = row.rate_plan_id && 
+                        row.rate_plan_name && 
+                        row.rate_plan_name.toString().trim() !== '';
 
-    return 1;
+    // Returns 1 only if ALL validations pass
+    return (isHotelValid && isGeoValid && isRoomValid && isRateValid) ? 1 : 0;
   }
 }
