@@ -62,7 +62,7 @@ export class PropertyMaterializerService {
       throw new Error(`Hotel not found for ID/Code: ${hotelId}`);
     }
 
-    // Auto-Bootstrap
+    // Auto-Bootstrap (Ensures setup records exist)
     await this.ensureSetupExists(hotel.id, queryRunner);
 
     // 2. Validate/Lock child entities
@@ -226,7 +226,7 @@ export class PropertyMaterializerService {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `, [row.id, row.code, row.name, row.category_name || 'N/A', row.brand_name || 'N/A', row.street_address, row.city, row.province, row.zip_code, row.country, row.latitude, row.longitude, row.phone, row.room_id, row.room_name, row.capacity, row.smoking, row.view, row.room_image, row.rate_id, row.rate_name, row.food, row.pay_at_hotel]);
       }
-      this.logger.log(`[AUTO-BOOTSTRAP SUKSES] Data connectivity setup berhasil diisi untuk hotel ID ${hotelId}`);
+      this.logger.log(`[AUTO-BOOTSTRAP SUCCESS] Connectivity setup data successfully populated for hotel ID ${hotelId}`);
     }
   }
 }

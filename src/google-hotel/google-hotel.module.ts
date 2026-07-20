@@ -28,6 +28,7 @@ import { PropertyRepositoryService } from './services/property-repository.servic
 import { GoogleSyncService } from './services/google-sync.service';
 import { GoogleHorizonCron } from './cron/google-horizon.cron';
 import { MockGoogleApiController } from './controllers/mock-google-api.controller';
+import { TestSQSController } from './controllers/test-sqs.controller';
 
 @Module({
   imports: [
@@ -74,7 +75,7 @@ import { MockGoogleApiController } from './controllers/mock-google-api.controlle
       inject: [ConfigService],
     }),
   ],
-  controllers: [MockGoogleApiController], 
+  controllers: [MockGoogleApiController,TestSQSController], 
   providers: [
     GoogleDispatcherConsumer,
     GoogleAriSyncConsumer,
