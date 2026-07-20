@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { GoogleAriSyncConsumer } from '../consumers/google-ari-sync.consumer';
+import { GoogleDispatcherConsumer } from '../consumers/google-dispatcher.consumer';
 
 @Injectable()
 export class GoogleSyncService {
@@ -11,7 +11,8 @@ export class GoogleSyncService {
 
   constructor(
     private configService: ConfigService,
-    private readonly googleAriSyncConsumer: GoogleAriSyncConsumer,
+    @Inject(forwardRef(() => GoogleDispatcherConsumer))
+    private readonly googleDispatcherConsumer: GoogleDispatcherConsumer,
   ) {
     this.useMock = this.configService.get<string>('USE_MOCK_SQS') === 'true' || this.configService.get<string>('USE_SQS_MOCK') === 'true';
     if (!this.useMock) {
@@ -43,7 +44,7 @@ export class GoogleSyncService {
       };
       setImmediate(async () => {
         try {
-          await this.googleAriSyncConsumer.handleBatchMessages([mockMessage as any]);
+          await this.googleDispatcherConsumer.handleBatchMessages([mockMessage as any]);
         } catch (err) {
           this.logger.error(`[SQS MOCK ERROR] Failed mock message for ${hotelCode}`, err);
         }
@@ -52,10 +53,8 @@ export class GoogleSyncService {
     }
 
     const command = new SendMessageCommand({
-      QueueUrl: this.configService.get('AWS_SQS_SYNC_QUEUE_URL')!,
+      QueueUrl: this.configService.get('AWS_SQS_CONNECTIVITY_QUEUE_URL')!,
       MessageBody: JSON.stringify(payload),
-      MessageGroupId: hotelCode, // Tetap gunakan hotelCode untuk jaminan antrean per hotel
-      MessageDeduplicationId: `${hotelCode}-${startDate}-${endDate}-${roomId || 0}-${rateId || 0}-${Date.now()}`,
     });
 
     await this.sqsClient.send(command);

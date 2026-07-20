@@ -9,8 +9,8 @@ export class CalendarMaterializerService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
   /**
-   * Materializes the complex relational data into the flat tb_hotel_calendar_inventory table
-   * using a Database Transaction to ensure atomicity (all-or-nothing).
+   * Materializes relational data into the flat tb_hotel_calendar_inventory table
+   * using a database transaction to ensure atomicity.
    */
   async materialize(
     hotelCode: string, 
@@ -26,7 +26,7 @@ export class CalendarMaterializerService {
     let qr = queryRunner;
 
     if (!qr) {
-      // Inisialisasi QueryRunner lokal jika tidak disediakan dari luar
+      // Initialize a local query runner if not provided externally
       qr = this.dataSource.createQueryRunner();
       await qr.connect();
       await qr.startTransaction();
@@ -36,7 +36,7 @@ export class CalendarMaterializerService {
     let filterConditions = "";
     const queryParams: any[] = [startDate, endDate, hotelCode];
 
-    // Tambahkan filter spesifik jika ID tersedia
+    // Add specific filters if IDs are provided
     if (roomTypeId) {
       filterConditions += " AND rt.id = ?";
       queryParams.push(roomTypeId);
@@ -96,11 +96,11 @@ export class CalendarMaterializerService {
     `;
 
     try {
-      // Eksekusi query menggunakan runner yang aktif
+      // Execute query using the active runner
       await qr.query(query, queryParams);
       
       if (localQueryRunner) {
-        // Sukses, simpan permanen (COMMIT) jika dibuat secara lokal
+        // Commit changes permanently if created locally
         await qr.commitTransaction();
         this.logger.log(`Successfully materialized calendar for ${hotelCode}`);
       }
@@ -108,16 +108,16 @@ export class CalendarMaterializerService {
     } catch (error) {
       this.logger.error(`Failed to materialize calendar for ${hotelCode}. Rolling back transaction.`, error.stack);
       if (localQueryRunner) {
-        // Gagal, batalkan semua perubahan (ROLLBACK) jika dibuat secara lokal
+        // Rollback all changes if created locally
         await qr.rollbackTransaction();
       }
       
-      // Lempar error agar fitur Auto-Retry dan DLQ pada SQS berjalan
+      // Throw error to trigger SQS auto-retry and DLQ mechanism
       throw error;
       
     } finally {
       if (localQueryRunner) {
-        // Lepaskan koneksi dari pool memori jika dibuat secara lokal
+        // Release connection back to the pool if created locally
         await qr.release();
       }
     }

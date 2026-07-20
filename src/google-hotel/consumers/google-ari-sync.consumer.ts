@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SqsMessageHandler } from '@ssut/nestjs-sqs';
 import { Message } from '@aws-sdk/client-sqs';
 import { DataSource } from 'typeorm';
 import Bottleneck from 'bottleneck';
@@ -27,7 +26,6 @@ export class GoogleAriSyncConsumer {
     private readonly googleApi: GoogleApiService
   ) {}
 
-  @SqsMessageHandler('google-sync-queue.fifo', true)
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
       // 1. Ekstrak payload mentah dari SQS

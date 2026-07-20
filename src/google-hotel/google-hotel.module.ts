@@ -14,6 +14,7 @@ import { HotelPromotion } from '../common/entities/hotel-promotion.entity';
 // Import Consumers
 import { GoogleAriSyncConsumer } from './consumers/google-ari-sync.consumer';
 import { PropertySyncConsumer } from './consumers/property-sync.consumer';
+import { GoogleDispatcherConsumer } from './consumers/google-dispatcher.consumer';
 
 // Import Services
 import { PropertyMaterializerService } from './services/property-materializer.service';
@@ -60,20 +61,11 @@ import { MockGoogleApiController } from './controllers/mock-google-api.controlle
         return {
           consumers: [
             {
-              name: 'google-sync-queue.fifo',
-              queueUrl: configService.get<string>('AWS_SQS_SYNC_QUEUE_URL')!, 
+              name: 'google-connectivity-queue',
+              queueUrl: configService.get<string>('AWS_SQS_CONNECTIVITY_QUEUE_URL')!, 
               sqs: sqsClient,
               batchSize: 5,
               waitTimeSeconds: 20,
-              suppressFifoWarning: true,
-            },
-            {
-              name: 'property-sync-queue.fifo',
-              queueUrl: configService.get<string>('AWS_SQS_PROPERTY_QUEUE_URL')!,
-              sqs: sqsClient,
-              batchSize: 5,
-              waitTimeSeconds: 20,
-              suppressFifoWarning: true,
             }
           ],
           producers: [], 
@@ -84,6 +76,7 @@ import { MockGoogleApiController } from './controllers/mock-google-api.controlle
   ],
   controllers: [MockGoogleApiController], 
   providers: [
+    GoogleDispatcherConsumer,
     GoogleAriSyncConsumer,
     PropertySyncConsumer,
     PropertyMaterializerService,            

@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { PropertySyncConsumer } from '../consumers/property-sync.consumer';
+import { GoogleDispatcherConsumer } from '../consumers/google-dispatcher.consumer';
 
 @Injectable()
 export class GoogleDispatcherService {
@@ -12,7 +12,8 @@ export class GoogleDispatcherService {
 
   constructor(
     private configService: ConfigService,
-    private readonly propertySyncConsumer: PropertySyncConsumer,
+    @Inject(forwardRef(() => GoogleDispatcherConsumer))
+    private readonly googleDispatcherConsumer: GoogleDispatcherConsumer,
   ) {
     this.useMock = this.configService.get<string>('USE_MOCK_SQS') === 'true' || this.configService.get<string>('USE_SQS_MOCK') === 'true';
     if (!this.useMock) {
@@ -24,7 +25,7 @@ export class GoogleDispatcherService {
           secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY')!,
         },
       });
-      this.queueUrl = this.configService.get<string>('AWS_SQS_PROPERTY_QUEUE_URL')!;
+      this.queueUrl = this.configService.get<string>('AWS_SQS_CONNECTIVITY_QUEUE_URL')!;
     }
   }
 
@@ -38,7 +39,7 @@ export class GoogleDispatcherService {
     const hotelCode = entityReference.hotelId;
 
     if (this.useMock) {
-      this.logger.log(`[SQS MOCK DISPATCH] Directly invoking PropertySyncConsumer for hotel: ${hotelCode}, type: ${updateType}`);
+      this.logger.log(`[SQS MOCK DISPATCH] Directly invoking GoogleDispatcherConsumer for hotel: ${hotelCode}, type: ${updateType}`);
       const mockMessage = {
         Body: JSON.stringify({
           entityReference,
@@ -48,7 +49,7 @@ export class GoogleDispatcherService {
       };
       setImmediate(async () => {
         try {
-          await this.propertySyncConsumer.handleBatchMessages([mockMessage as any]);
+          await this.googleDispatcherConsumer.handleBatchMessages([mockMessage as any]);
         } catch (err) {
           this.logger.error(`[SQS MOCK ERROR] Failed to process mock dispatch for ${hotelCode}`, err);
         }
@@ -63,9 +64,6 @@ export class GoogleDispatcherService {
       const command = new SendMessageCommand({
         QueueUrl: this.queueUrl,
         MessageBody: JSON.stringify({ entityReference, updateType }),
-        // MessageGroupId menjamin urutan FIFO aman per properti hotel
-        MessageGroupId: String(hotelCode), 
-        MessageDeduplicationId: deduplicationId,
       });
 
       await this.sqsClient.send(command);

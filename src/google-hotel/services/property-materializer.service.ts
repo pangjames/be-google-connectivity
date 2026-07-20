@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner } from 'typeorm';
 import { Hotel } from '../../common/entities/hotel.entity';
@@ -15,6 +15,7 @@ export class PropertyMaterializerService {
   constructor(
     @InjectRepository(Hotel)
     private readonly hotelRepo: Repository<Hotel>,
+    @Inject(forwardRef(() => GoogleSyncService))
     private readonly googleSyncService: GoogleSyncService,
     private readonly googleApiService: GoogleApiService,
   ) {}
@@ -60,6 +61,9 @@ export class PropertyMaterializerService {
     if (!hotel) {
       throw new Error(`Hotel not found for ID/Code: ${hotelId}`);
     }
+
+    // Auto-Bootstrap
+    await this.ensureSetupExists(hotel.id, queryRunner);
 
     // 2. Validate/Lock child entities
     if (entityReference.roomId) {
@@ -189,5 +193,40 @@ export class PropertyMaterializerService {
 
     // Returns 1 only if ALL validations pass
     return (isHotelValid && isGeoValid && isRoomValid && isRateValid) ? 1 : 0;
+  }
+
+  private async ensureSetupExists(hotelId: number, queryRunner: QueryRunner) {
+    const manager = queryRunner.manager;
+    const existing = await manager.query(`SELECT hotel_code FROM tb_hotel_connectivity_setup WHERE hotel_id = ? LIMIT 1`, [hotelId]);
+
+    if (existing.length === 0) {
+      this.logger.log(`[AUTO-BOOTSTRAP] Setup connectivity not found for hotel ID ${hotelId}. Extracting from Master DB...`);
+      const masterData = await manager.query(`
+        SELECT 
+          h.id, h.code, h.name, cat.category_name, br.brand_name,
+          h.street_address, h.area as city, h.region as province, h.zip_code, 'ID' as country,
+          h.latitude, h.longitude, h.phone,
+          rt.id as room_id, rt.name as room_name, rt.guest as capacity, rt.smoking, rt.view,
+          (SELECT filename FROM tb_hotel_image img WHERE img.room_type_id = rt.id AND img.type = 1 LIMIT 1) as room_image,
+          rp.id as rate_id, rp.name as rate_name, rp.food, rp.pay_at_hotel
+        FROM tb_hotel h
+        LEFT JOIN ms_property_category cat ON h.property_category = cat.id
+        LEFT JOIN ms_brand br ON h.property_brand = br.id
+        JOIN tb_hotel_room_type rt ON rt.hotel_id = h.id
+        JOIN tb_hotel_rate_plan rp ON rp.room_type_id = rt.id
+        WHERE h.id = ?
+      `, [hotelId]);
+
+      for (const row of masterData) {
+        await manager.query(`
+          INSERT INTO tb_hotel_connectivity_setup 
+          (hotel_id, hotel_code, hotel_name, property_category, hotel_brand, street_address, city, province, zip_code, country, latitude, longitude, phone,
+           room_type_id, room_type_name, room_capacity, room_smoking, room_view, room_image_url,
+           rate_plan_id, rate_plan_name, breakfast_included, pay_at_hotel, setup_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        `, [row.id, row.code, row.name, row.category_name || 'N/A', row.brand_name || 'N/A', row.street_address, row.city, row.province, row.zip_code, row.country, row.latitude, row.longitude, row.phone, row.room_id, row.room_name, row.capacity, row.smoking, row.view, row.room_image, row.rate_id, row.rate_name, row.food, row.pay_at_hotel]);
+      }
+      this.logger.log(`[AUTO-BOOTSTRAP SUKSES] Data connectivity setup berhasil diisi untuk hotel ID ${hotelId}`);
+    }
   }
 }

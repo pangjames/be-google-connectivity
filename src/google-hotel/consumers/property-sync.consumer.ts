@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SqsMessageHandler } from '@ssut/nestjs-sqs';
 import { Message } from '@aws-sdk/client-sqs';
 import { DataSource } from 'typeorm';
 import { PropertyMaterializerService } from '../services/property-materializer.service';
@@ -14,7 +13,6 @@ export class PropertySyncConsumer {
     private readonly dataSource: DataSource,
   ) {}
 
-  @SqsMessageHandler('property-sync-queue.fifo', true)
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
       const { entityReference, updateType } = JSON.parse(message.Body as string);
