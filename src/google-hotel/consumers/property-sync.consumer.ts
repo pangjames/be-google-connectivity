@@ -13,6 +13,10 @@ export class PropertySyncConsumer {
     private readonly dataSource: DataSource,
   ) {}
 
+  /**
+   * Processes a batch of SQS messages for property synchronization.
+   * Handles database transactions, pessimistic locking, and subsequent external API push executions.
+   */
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
       const { entityReference, updateType } = JSON.parse(message.Body as string);
@@ -35,19 +39,19 @@ export class PropertySyncConsumer {
           await qb.where('hotel.code = :code', { code: hotelId }).getOne();
         }
 
-        // 1. Menjalankan pemrosesan database & validasi dalam transaksi
+        // 1. Execute database processing & validation inside the transaction
         result = await this.propertyMaterializerService.handleExtranetDeltaUpdate(entityReference, updateType, queryRunner);
 
         await queryRunner.commitTransaction();
       } catch (error) {
         await queryRunner.rollbackTransaction();
-        this.logger.error(`Gagal memproses transaksi database hotel ${hotelId}`, error);
-        throw error; // Lempar kembali agar SQS retry
+        this.logger.error(`Failed to process database transaction for hotel ${hotelId}`, error);
+        throw error; // Rethrow to trigger SQS retry
       } finally {
         await queryRunner.release();
       }
 
-      // 2. Menjalankan pemanggilan API eksternal di luar transaksi database
+      // 2. Execute external API calls outside of the database transaction
       if (result && result.shouldPush) {
         try {
           await this.propertyMaterializerService.executeExternalPush(
@@ -58,8 +62,8 @@ export class PropertySyncConsumer {
             result.ratePlanId
           );
         } catch (apiError) {
-          this.logger.error(`Gagal mengirim data Google untuk hotel ${result.hotelCode}`, apiError);
-          throw apiError; // Lempar agar SQS retry (data DB sudah aman ter-commit)
+          this.logger.error(`Failed to dispatch Google data for hotel ${result.hotelCode}`, apiError);
+          throw apiError; // Rethrow for SQS retry (DB data is safely committed)
         }
       }
     }
