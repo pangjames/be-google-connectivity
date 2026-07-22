@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 class BootstrapDto {
   @ApiProperty({ example: { hotelId: 108 } })
   entityReference: { hotelId: number };
+  
   @ApiProperty({ example: 'INITIAL_BOOTSTRAP' })
   updateType: string;
 }
@@ -15,6 +16,7 @@ class BootstrapDto {
 class HotelUpdateDto {
   @ApiProperty({ example: { hotelId: 108 } })
   entityReference: { hotelId: number };
+  
   @ApiProperty({ example: 'HOTEL_UPDATE' })
   updateType: string;
 }
@@ -22,6 +24,7 @@ class HotelUpdateDto {
 class RoomUpdateDto {
   @ApiProperty({ example: { hotelId: 108, roomId: 10 } })
   entityReference: { hotelId: number; roomId: number };
+  
   @ApiProperty({ example: 'ROOM_UPDATE' })
   updateType: string;
 }
@@ -29,42 +32,75 @@ class RoomUpdateDto {
 class RatePlanUpdateDto {
   @ApiProperty({ example: { hotelId: 108, roomId: 10, rateId: 22 } })
   entityReference: { hotelId: number; roomId: number; rateId: number };
+  
   @ApiProperty({ example: 'RATE_PLAN_UPDATE' })
   updateType: string;
 }
 
 class AriChangeDto {
-  @ApiProperty({ example: 'YK.143-V1Testing2' })
+  @ApiProperty({ example: 'H001' })
   hotelCode: string;
+  
   @ApiProperty({ example: '2026-07-15' })
   startDate: string;
+  
   @ApiProperty({ example: '2026-07-20' })
   endDate: string;
+  
   @ApiProperty({ example: '10' })
   roomId: string;
+  
   @ApiProperty({ example: '22' })
   rateId: string;
+  
   @ApiProperty({ example: 'ARI_CHANGE' })
   updateType: string;
 }
 
 class DeltaSyncDto {
-  @ApiProperty({ example: 'YK.143-V1Testing2' })
+  @ApiProperty({ example: 'H001' })
   hotelCode: string;
+  
   @ApiProperty({ example: '2026-07-15' })
   date: string;
+  
   @ApiProperty({ example: 'DELTA_SYNC' })
   updateType: string;
 }
 
 class ManualSyncDto {
-  @ApiProperty({ example: 'YK.143-V1Testing2' })
+  @ApiProperty({ example: 'H001' })
   hotelCode: string;
+  
   @ApiProperty({ example: '2026-08-01' })
   startDate: string;
+  
   @ApiProperty({ example: '2026-08-31' })
   endDate: string;
+  
   @ApiProperty({ example: 'MANUAL_SYNC' })
+  updateType: string;
+}
+
+class PromotionEntityRefDto {
+  @ApiProperty({ example: 108, required: false, description: 'Leave empty if it is a Global Promo' })
+  hotelId?: number;
+
+  @ApiProperty({ example: 'YK.143-V1Testing2', required: false, description: 'Leave empty if it is a Global Promo' })
+  hotelCode?: string;
+
+  @ApiProperty({ example: 45 })
+  promotionId: number;
+
+  @ApiProperty({ example: 'delete', enum: ['upsert', 'delete'] })
+  action: 'upsert' | 'delete';
+}
+
+class PromotionUpdateDto {
+  @ApiProperty({ type: PromotionEntityRefDto })
+  entityReference: PromotionEntityRefDto;
+
+  @ApiProperty({ example: 'PROMOTION_UPDATE' })
   updateType: string;
 }
 
@@ -159,6 +195,13 @@ export class TestSQSController {
   @ApiOperation({ summary: 'Test SQS: MANUAL_SYNC' })
   @ApiBody({ type: ManualSyncDto })
   async testManualSync(@Body() body: ManualSyncDto) {
+    return this.dispatch(body);
+  }
+
+  @Post('promotion-update')
+  @ApiOperation({ summary: 'Test SQS: PROMOTION_UPDATE' })
+  @ApiBody({ type: PromotionUpdateDto })
+  async testPromotionUpdate(@Body() body: PromotionUpdateDto) {
     return this.dispatch(body);
   }
 }

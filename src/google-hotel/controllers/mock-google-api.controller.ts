@@ -65,7 +65,10 @@ export class MockGoogleApiController {
     else if (rawXml.includes('<OTA_HotelAvailNotifRQ')) {
       messageType = 'ari-availability'; // Room Sales Thresholds / Open-Close Restrictions (CTA/CTD)
     }
-
+    else if (rawXml.includes('<Promotions')) {
+      messageType = 'promotions'; 
+    }
+    
     // 3. Construct uniform file formatting metrics
     const fileName = `${hotelId}-${messageType}.xml`;
     const filePath = path.join(STORAGE_DIR, fileName);

@@ -4,17 +4,21 @@ import { SqsModule } from '@ssut/nestjs-sqs';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-// Import Entities (Sesuaikan dengan yang digunakan di Service/Repository)
+// Import Entities
 import { Hotel } from '../common/entities/hotel.entity';
 import { HotelCalendarInventory } from '../common/entities/hotel-calendar-inventory.entity';
 import { HotelRoomType } from '../common/entities/hotel-room-type.entity';
 import { HotelRatePlan } from '../common/entities/hotel-rate-plan.entity';
 import { HotelPromotion } from '../common/entities/hotel-promotion.entity';
+import { HotelPromotionBlackout } from '../common/entities/hotel-promotion-blackout.entity';
+import { HotelPromotionApply } from '../common/entities/hotel-promotion-apply.entity';
+import { HotelConnectivitySetup } from '../common/entities/hotel-connectivity-setup.entity';
 
 // Import Consumers
 import { GoogleAriSyncConsumer } from './consumers/google-ari-sync.consumer';
 import { PropertySyncConsumer } from './consumers/property-sync.consumer';
 import { GoogleDispatcherConsumer } from './consumers/google-dispatcher.consumer';
+import { PromotionSyncConsumer } from './consumers/promotion-sync.consumer';
 
 // Import Services
 import { PropertyMaterializerService } from './services/property-materializer.service';
@@ -27,6 +31,7 @@ import { PromotionRepositoryService } from './services/promotion-repository.serv
 import { PropertyRepositoryService } from './services/property-repository.service';
 import { GoogleSyncService } from './services/google-sync.service';
 import { GoogleHorizonCron } from './cron/google-horizon.cron';
+import { PromotionCronService } from './cron/promotion-cron.service';
 import { MockGoogleApiController } from './controllers/mock-google-api.controller';
 import { TestSQSController } from './controllers/test-sqs.controller';
 
@@ -38,7 +43,10 @@ import { TestSQSController } from './controllers/test-sqs.controller';
       HotelCalendarInventory, 
       HotelRoomType, 
       HotelRatePlan, 
-      HotelPromotion
+      HotelPromotion,
+      HotelPromotionBlackout,
+      HotelPromotionApply,
+      HotelConnectivitySetup,
     ]),
     SqsModule.registerAsync({
       imports: [ConfigModule],
@@ -75,11 +83,12 @@ import { TestSQSController } from './controllers/test-sqs.controller';
       inject: [ConfigService],
     }),
   ],
-  controllers: [MockGoogleApiController,TestSQSController], 
+  controllers: [MockGoogleApiController, TestSQSController], 
   providers: [
     GoogleDispatcherConsumer,
     GoogleAriSyncConsumer,
     PropertySyncConsumer,
+    PromotionSyncConsumer,
     PropertyMaterializerService,            
     CalendarMaterializerService,
     CalendarRepositoryService,
@@ -90,6 +99,7 @@ import { TestSQSController } from './controllers/test-sqs.controller';
     GoogleDispatcherService,          
     GoogleSyncService,
     GoogleHorizonCron,
+    PromotionCronService,
   ],
 })
 export class GoogleHotelModule {}

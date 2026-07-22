@@ -30,7 +30,7 @@ export class GoogleDispatcherService {
   }
 
   /**
-   * Fungsi untuk mengirim perintah sinkronisasi hotel ke AWS SQS FIFO
+   * Send a promotion synchronization command to AWS SQS FIFO
    */
   async dispatchSyncCommand(
     updateType: string,
@@ -58,7 +58,6 @@ export class GoogleDispatcherService {
     }
 
     try {
-      // Membuat hash sederhana untuk deduplikasi pesan dalam 5 menit
       const deduplicationId = `${hotelCode}_${updateType}_${Date.now()}`;
 
       const command = new SendMessageCommand({
@@ -70,6 +69,55 @@ export class GoogleDispatcherService {
       this.logger.log(`[SQS DISPATCH] Berhasil mengirim perintah untuk hotel: ${hotelCode}`);
     } catch (error) {
       this.logger.error(`[SQS ERROR] Gagal mengirim pesan ke SQS:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fungsi untuk mengirim perintah sinkronisasi promosi ke AWS SQS FIFO
+   */
+  async dispatchPromotionCommand(
+    hotelId: string | number | null | undefined,
+    promotionId: number,
+    action?: string,
+    hotelCode?: string
+  ) {
+    const payload = { 
+      entityReference: {
+        hotelId,
+        hotelCode,
+        promotionId,
+        action
+      },
+      updateType: 'PROMOTION_UPDATE' 
+    };
+
+    if (this.useMock) {
+      this.logger.log(`[SQS MOCK DISPATCH] Directly invoking GoogleDispatcherConsumer for promo ID: ${promotionId}`);
+      const mockMessage = {
+        Body: JSON.stringify(payload),
+        MessageId: `mock-dispatch-promo-${Date.now()}`,
+      };
+      setImmediate(async () => {
+        try {
+          await this.googleDispatcherConsumer.handleBatchMessages([mockMessage as any]);
+        } catch (err) {
+          this.logger.error(`[SQS MOCK ERROR] Failed to process mock promotion dispatch for promo ${promotionId}`, err);
+        }
+      });
+      return;
+    }
+
+    try {
+      const command = new SendMessageCommand({
+        QueueUrl: this.queueUrl,
+        MessageBody: JSON.stringify(payload),
+      });
+
+      await this.sqsClient.send(command);
+      this.logger.log(`[SQS DISPATCH] Promotion sync queued for promo: ${promotionId}`);
+    } catch (error) {
+      this.logger.error(`[SQS ERROR] Gagal mengirim pesan promo ke SQS:`, error);
       throw error;
     }
   }
