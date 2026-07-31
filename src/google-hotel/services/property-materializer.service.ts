@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, QueryRunner } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Hotel } from '../../common/entities/hotel.entity';
 import { HotelRoomType } from '../../common/entities/hotel-room-type.entity';
 import { HotelRatePlan } from '../../common/entities/hotel-rate-plan.entity';
@@ -8,6 +9,7 @@ import { HotelConnectivitySetup } from '../../common/entities/hotel-connectivity
 import { GoogleSyncService } from './google-sync.service';
 import { GoogleApiService } from './google-api.service';
 import { GoogleStaticFeedBuilder } from '../builders/google-static-feed.builder';
+import { AvailabilityBuilder } from '../builders/availability.builder';
 
 @Injectable()
 export class PropertyMaterializerService {
@@ -19,6 +21,7 @@ export class PropertyMaterializerService {
     @Inject(forwardRef(() => GoogleSyncService))
     private readonly googleSyncService: GoogleSyncService,
     private readonly googleApiService: GoogleApiService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -30,7 +33,7 @@ export class PropertyMaterializerService {
     entityReference: any,
     updateType: string,
     queryRunner: QueryRunner
-  ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number }> {
+  ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number; deletedSetups?: any[]; shouldTeardown?: boolean }> {
     // -------------------------------------------------------------------------
     // STAGE 1: Input Parameter Validation
     // -------------------------------------------------------------------------
@@ -70,26 +73,40 @@ export class PropertyMaterializerService {
     // Auto-Bootstrap: Ensure connectivity setup record exists if not already present
     await this.ensureSetupExists(hotel.id, queryRunner);
 
-    // Verify room and rate entities existence if provided
-    if (entityReference.roomId) {
-      const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.roomId } });
-      if (!room) {
-        throw new Error(`Room Type with ID ${entityReference.roomId} not found`);
+    // Verify room and rate entities existence if provided and not a delete action
+    if (updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE') {
+      if (entityReference.roomId) {
+        const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.roomId } });
+        if (!room) {
+          throw new Error(`Room Type with ID ${entityReference.roomId} not found`);
+        }
       }
-    }
 
-    if (entityReference.rateId) {
-      const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rateId } });
-      if (!ratePlan) {
-        throw new Error(`Rate Plan with ID ${entityReference.rateId} not found`);
+      if (entityReference.rateId) {
+        const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rateId } });
+        if (!ratePlan) {
+          throw new Error(`Rate Plan with ID ${entityReference.rateId} not found`);
+        }
       }
     }
 
     // -------------------------------------------------------------------------
-    // STAGE 3: Precise DB Delta Update Execution (Raw SQL JOIN)
+    // STAGE 3: Precise DB Delta Update Execution (Raw SQL JOIN or DELETE)
     // Executed specifically based on updateType before Gatekeeper reads the snapshot
     // -------------------------------------------------------------------------
-    if (updateType === 'HOTEL_UPDATE') {
+    if (updateType === 'ROOM_DELETE') {
+      this.logger.log(`[PROPERTY DB UPDATE] Deleting room ID ${entityReference.roomId} for: ${hotel.code}`);
+      const deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id, room_type_id: entityReference.roomId } });
+      await manager.delete(HotelConnectivitySetup, { hotel_id: hotel.id, room_type_id: entityReference.roomId });
+      (queryRunner as any).deletedSetups = deletedSetups; 
+    } 
+    else if (updateType === 'RATE_PLAN_DELETE') {
+      this.logger.log(`[PROPERTY DB UPDATE] Deleting rate plan ID ${entityReference.rateId} for: ${hotel.code}`);
+      const deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id, rate_plan_id: entityReference.rateId } });
+      await manager.delete(HotelConnectivitySetup, { hotel_id: hotel.id, rate_plan_id: entityReference.rateId });
+      (queryRunner as any).deletedSetups = deletedSetups;
+    }
+    else if (updateType === 'HOTEL_UPDATE') {
       this.logger.log(`[PROPERTY DB UPDATE] Aligning master hotel profile for: ${hotel.code}`);
       await manager.query(
         `
@@ -150,7 +167,8 @@ export class PropertyMaterializerService {
       where: { hotel_code: hotel.code },
     });
 
-    // Validate eligibility of all hotel setup rows
+    // Check if this hotel was previously active (had a setup_status = 1)
+    const wasActive = flatData.some(row => row.setup_status === 1);
     const isAllValid = flatData.length > 0 && flatData.every((row: HotelConnectivitySetup) => this.validateGatekeeper(row) === 1);
 
     if (!isAllValid) {
@@ -158,7 +176,15 @@ export class PropertyMaterializerService {
 
       await manager.update(HotelConnectivitySetup, { hotel_code: hotel.code }, { setup_status: 0 });
 
-      return { shouldPush: false, hotelCode: hotel.code, flatData: [] };
+      return { 
+        shouldPush: false, 
+        shouldTeardown: wasActive, // Flag jika hotel turun status dari 1 ke 0
+        hotelCode: hotel.code, 
+        flatData: flatData, 
+        deletedSetups: (queryRunner as any).deletedSetups || [],
+        roomTypeId: entityReference.roomId,
+        ratePlanId: entityReference.rateId
+      };
     }
 
     // Mark setup status as active (setup_status = 1) if validation passes
@@ -173,6 +199,7 @@ export class PropertyMaterializerService {
       shouldPush: true,
       hotelCode: hotel.code,
       flatData: activeFlatData,
+      deletedSetups: (queryRunner as any).deletedSetups || [],
       roomTypeId: entityReference.roomId,
       ratePlanId: entityReference.rateId,
     };
@@ -202,12 +229,40 @@ export class PropertyMaterializerService {
     }
 
     // 2. Domino Effect: If Room or Rate Plan updates occur, trigger 365-day ARI synchronization
-    if (updateType !== 'HOTEL_UPDATE') {
+    if (updateType !== 'HOTEL_UPDATE' && updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE') {
       const startDate = new Date().toISOString().split('T')[0];
       const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
       this.logger.log(`[DOMINO EFFECT] Triggering 365-day ARI synchronization for hotel: ${hotelCode} (${startDate} to ${endDate})`);
       await this.googleSyncService.syncDateRange(hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType);
+    }
+  }
+
+  /**
+   * TEARDOWN FUNCTION
+   */
+  async executeTeardown(hotelCode: string, flatData: any[]): Promise<void> {
+    this.logger.log(`[TEARDOWN] Executing Master Close for hotel ${hotelCode}.`);
+
+    // Gunakan ROLLING_HORIZON_MONTHS yang sama dengan Cron
+    const horizonMonths = parseInt(this.configService.get('ROLLING_HORIZON_MONTHS', '3'), 10);
+    const today = new Date();
+    const endDate = new Date(today);
+    endDate.setMonth(endDate.getMonth() + horizonMonths); // Set tanggal akhir sesuai horizon
+
+    const combinations = flatData.map(row => ({
+      date: today,
+      endDate: endDate,
+      room_type_id: row.room_type_id,
+      rate_plan_id: row.rate_plan_id,
+      restriction_master: 1, // 1 = Close (Stop Sell)
+      set_min_los: 1 
+    }));
+
+    if (combinations.length > 0) {
+      const availXml = AvailabilityBuilder.buildAvailNotifRQ(hotelCode, combinations);
+      await this.googleApiService.pushPayload(hotelCode, availXml, 'Avail (Teardown)');
+      this.logger.log(`[TEARDOWN] Pushed Stop Sell until ${endDate.toISOString().split('T')[0]}`);
     }
   }
 

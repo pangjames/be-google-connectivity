@@ -1,6 +1,5 @@
 import { create } from 'xmlbuilder2';
 
-
 export class AvailabilityBuilder {
   static buildAvailNotifRQ(
     hotelCode: string,
@@ -18,7 +17,8 @@ export class AvailabilityBuilder {
         .ele('AvailStatusMessage')
           .ele('StatusApplicationControl', {
             Start: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
-            End: (inv.date instanceof Date ? inv.date : new Date(inv.date)).toISOString().split('T')[0],
+            // If endDate is available (from Teardown), use it. Otherwise, use Start date (for daily sync).
+            End: (inv.endDate ? (inv.endDate instanceof Date ? inv.endDate : new Date(inv.endDate)) : (inv.date instanceof Date ? inv.date : new Date(inv.date))).toISOString().split('T')[0],
             InvTypeCode: inv.room_type_id.toString(),
             RatePlanCode: inv.rate_plan_id.toString(),
           }).up()

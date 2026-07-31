@@ -26,7 +26,15 @@ export class PropertySyncConsumer {
       await queryRunner.connect();
       await queryRunner.startTransaction();
 
-      let result: { shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number } | null = null;
+      let result: { 
+        shouldPush: boolean; 
+        hotelCode: string; 
+        flatData: any[]; 
+        roomTypeId?: number; 
+        ratePlanId?: number;
+        deletedSetups?: any[];
+        shouldTeardown?: boolean;
+      } | null = null;
 
       try {
         const qb = queryRunner.manager
@@ -52,18 +60,36 @@ export class PropertySyncConsumer {
       }
 
       // 2. Execute external API calls outside of the database transaction
-      if (result && result.shouldPush) {
-        try {
-          await this.propertyMaterializerService.executeExternalPush(
-            result.hotelCode, 
-            result.flatData, 
-            updateType,
-            result.roomTypeId,
-            result.ratePlanId
-          );
-        } catch (apiError) {
-          this.logger.error(`Failed to dispatch Google data for hotel ${result.hotelCode}`, apiError);
-          throw apiError; // Rethrow for SQS retry (DB data is safely committed)
+      if (result) {
+        if (result.shouldPush) {
+          try {
+            // A. If any Room/Rate is deleted, perform Partial Teardown first
+            if (result.deletedSetups && result.deletedSetups.length > 0) {
+              this.logger.log(`[PARTIAL TEARDOWN] Master Close for deleted room/rate on ${result.hotelCode}`);
+              await this.propertyMaterializerService.executeTeardown(result.hotelCode, result.deletedSetups);
+            }
+
+            // B. Proceed to push the latest data (Static Feed without the deleted Room/Rate)
+            await this.propertyMaterializerService.executeExternalPush(
+              result.hotelCode, 
+              result.flatData, 
+              updateType,
+              result.roomTypeId,
+              result.ratePlanId
+            );
+          } catch (apiError) {
+            this.logger.error(`Failed to dispatch Google data for hotel ${result.hotelCode}`, apiError);
+            throw apiError; 
+          }
+        } 
+        // C. FULL TEARDOWN: If gatekeeper fails and status drops to 0
+        else if (result.shouldTeardown) {
+          try {
+            await this.propertyMaterializerService.executeTeardown(result.hotelCode, result.flatData);
+          } catch (teardownError) {
+            this.logger.error(`Failed teardown for hotel ${result.hotelCode}`, teardownError);
+            throw teardownError;
+          }
         }
       }
     }
