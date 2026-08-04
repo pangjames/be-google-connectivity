@@ -25,40 +25,76 @@ export class PropertyMaterializerService {
   ) {}
 
   /**
-   * Database transaction processing for property updates / extranet delta updates.
-   * The entire database workflow is executed within a transaction (QueryRunner) to ensure consistency and atomicity.
-   * External API calls are intentionally separated outside the transaction to avoid holding database locks.
+   * Processes database transactions for property updates and extranet delta syncs.
+   * The entire database operations are executed within a QueryRunner transaction to ensure data consistency and atomicity.
+   * External API calls are deliberately isolated outside the transaction to prevent holding DB locks during network calls.
    */
   async handleExtranetDeltaUpdate(
     entityReference: any,
     updateType: string,
     queryRunner: QueryRunner
-  ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number; deletedSetups?: any[]; shouldTeardown?: boolean }> {
+  ): Promise<{ shouldPush: boolean; hotelCode: string; flatData: any[]; roomTypeId?: number; ratePlanId?: number; deletedSetups?: any[]; shouldTeardown?: boolean } | null> {
     // -------------------------------------------------------------------------
     // STAGE 1: Input Parameter Validation
     // -------------------------------------------------------------------------
     const hotelId = entityReference?.hotelId;
-    if (!hotelId) {
-      throw new Error('hotelId is mandatory');
-    }
-
-    if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) {
-      throw new Error('ROOM_UPDATE requires roomId');
-    }
-
-    if (updateType === 'RATE_PLAN_UPDATE') {
-      if (!entityReference.roomId || !entityReference.rateId) {
-        throw new Error('RATE_PLAN_UPDATE requires both roomId and rateId');
-      }
-    }
+    if (!hotelId) throw new Error('hotelId is mandatory');
+    if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) throw new Error('ROOM_UPDATE requires roomId');
+    if (updateType === 'RATE_PLAN_UPDATE' && (!entityReference.roomId || !entityReference.rateId)) throw new Error('RATE_PLAN_UPDATE requires both roomId and rateId');
 
     this.logger.log(`[PROPERTY DELTA] Processing DB transaction for ${updateType} (Hotel ID/Code: ${hotelId})`);
-
     const manager = queryRunner.manager;
 
     // -------------------------------------------------------------------------
-    // STAGE 2: Master Entity Verification & Locking (Hotel, Room Type, Rate Plan)
+    // STAGE 2: HANDLE HOTEL_DELETE FIRST (Before querying master tb_hotel)
+    // If the hotel has already been purged from master DB, the findOne lookup will fail.
     // -------------------------------------------------------------------------
+    if (updateType === 'HOTEL_DELETE') {
+      this.logger.log(`[PROPERTY DB UPDATE] Deleting / Teardown entire hotel ID/Code: ${hotelId}`);
+      
+      // Retrieve the latest setup snapshot for Google Teardown processing
+      let deletedSetups = [];
+      if (typeof hotelId === 'number') {
+        deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
+      } else {
+        const hIdStr = String(hotelId);
+        deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_code: hIdStr } });
+      }
+
+      if (deletedSetups.length > 0) {
+        const hCode = deletedSetups[0].hotel_code;
+        
+        // Update status to 0 (inactive/deactivated) to signal deactivation to the gatekeeper
+        if (typeof hotelId === 'number') {
+          await manager.update(HotelConnectivitySetup, { hotel_id: hotelId }, { setup_status: 0 });
+        } else {
+          await manager.update(HotelConnectivitySetup, { hotel_code: String(hotelId) }, { setup_status: 0 });
+        }
+
+        return { 
+          shouldPush: false, 
+          shouldTeardown: true, // Triggers executeTeardown() in the consumer
+          hotelCode: hCode, 
+          flatData: deletedSetups, // Contains last known room/rate configurations for closeout
+          deletedSetups: deletedSetups 
+        };
+      } else {
+         this.logger.warn(`Hotel ID ${hotelId} is already deleted or has no setup record. Skipping SQS event.`);
+         return null; // Skip execution if no active setup data exists to teardown
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // STAGE 3: Master Entity Verification & Locking (For Update / Create / Partial Delete)
+    // -------------------------------------------------------------------------
+    if (updateType === 'HOTEL_UPDATE') {
+      const setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
+      if (!setupExists) {
+        this.logger.warn(`Hotel ID ${hotelId} has no setup record yet for HOTEL_UPDATE. Skipping synchronization safely.`);
+        return null; 
+      }
+    }
+
     let hotel: Hotel | null;
     if (typeof hotelId === 'number') {
       hotel = await manager.findOne(Hotel, { where: { id: hotelId } });
@@ -70,44 +106,44 @@ export class PropertyMaterializerService {
       throw new Error(`Hotel not found for ID/Code: ${hotelId}`);
     }
 
-    // Auto-Bootstrap: Ensure connectivity setup record exists if not already present
+    // Auto-Bootstrap: Ensure connectivity setup record exists
     await this.ensureSetupExists(hotel.id, queryRunner);
 
-    // Verify room and rate entities existence if provided and not a delete action
+    // Verify room and rate entities (Excluding delete operations)
     if (updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE') {
       if (entityReference.roomId) {
         const room = await manager.findOne(HotelRoomType, { where: { id: entityReference.roomId } });
-        if (!room) {
-          throw new Error(`Room Type with ID ${entityReference.roomId} not found`);
-        }
+        if (!room) throw new Error(`Room Type with ID ${entityReference.roomId} not found`);
       }
-
       if (entityReference.rateId) {
         const ratePlan = await manager.findOne(HotelRatePlan, { where: { id: entityReference.rateId } });
-        if (!ratePlan) {
-          throw new Error(`Rate Plan with ID ${entityReference.rateId} not found`);
-        }
+        if (!ratePlan) throw new Error(`Rate Plan with ID ${entityReference.rateId} not found`);
       }
     }
 
     // -------------------------------------------------------------------------
-    // STAGE 3: Precise DB Delta Update Execution (Raw SQL JOIN or DELETE)
+    // STAGE 4: Precise DB Delta Update Execution (Raw SQL JOIN or DELETE)
     // Executed specifically based on updateType before Gatekeeper reads the snapshot
     // -------------------------------------------------------------------------
     if (updateType === 'ROOM_DELETE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Deleting room ID ${entityReference.roomId} for: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Deleting room ID ${entityReference.roomId} for hotel: ${hotel.code}`);
       const deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id, room_type_id: entityReference.roomId } });
       await manager.delete(HotelConnectivitySetup, { hotel_id: hotel.id, room_type_id: entityReference.roomId });
       (queryRunner as any).deletedSetups = deletedSetups; 
     } 
     else if (updateType === 'RATE_PLAN_DELETE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Deleting rate plan ID ${entityReference.rateId} for: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Deleting rate plan ID ${entityReference.rateId} for hotel: ${hotel.code}`);
       const deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id, rate_plan_id: entityReference.rateId } });
       await manager.delete(HotelConnectivitySetup, { hotel_id: hotel.id, rate_plan_id: entityReference.rateId });
       (queryRunner as any).deletedSetups = deletedSetups;
     }
     else if (updateType === 'HOTEL_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning master hotel profile for: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Aligning master hotel profile for hotel: ${hotel.code}`);
+      const setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotel.id } });
+      if (!setupExists) {
+        this.logger.warn(`Hotel ID ${hotel.id} has no setup record yet for HOTEL_UPDATE. Skipping synchronization.`);
+        return null;
+      }
       await manager.query(
         `
         UPDATE tb_hotel_connectivity_setup s
@@ -129,7 +165,7 @@ export class PropertyMaterializerService {
         [hotel.id]
       );
     } else if (updateType === 'ROOM_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning room data ID ${entityReference.roomId} for: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Aligning room data ID ${entityReference.roomId} for hotel: ${hotel.code}`);
       await manager.query(
         `
         UPDATE tb_hotel_connectivity_setup s
@@ -144,7 +180,7 @@ export class PropertyMaterializerService {
         [hotel.id, entityReference.roomId]
       );
     } else if (updateType === 'RATE_PLAN_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning rate plan ID ${entityReference.rateId} for: ${hotel.code}`);
+      this.logger.log(`[PROPERTY DB UPDATE] Aligning rate plan ID ${entityReference.rateId} for hotel: ${hotel.code}`);
       await manager.query(
         `
         UPDATE tb_hotel_connectivity_setup s
@@ -160,14 +196,14 @@ export class PropertyMaterializerService {
     }
 
     // -------------------------------------------------------------------------
-    // STAGE 4: Latest Snapshot Retrieval & Strict Gatekeeper Validation
+    // STAGE 5: Latest Snapshot Retrieval & Strict Gatekeeper Validation
     // Utilizing TypeORM Entity (HotelConnectivitySetup) for type-safety
     // -------------------------------------------------------------------------
     const flatData = await manager.find(HotelConnectivitySetup, {
       where: { hotel_code: hotel.code },
     });
 
-    // Check if this hotel was previously active (had a setup_status = 1)
+    // Check if this hotel was previously active (setup_status = 1)
     const wasActive = flatData.some(row => row.setup_status === 1);
     const isAllValid = flatData.length > 0 && flatData.every((row: HotelConnectivitySetup) => this.validateGatekeeper(row) === 1);
 
@@ -178,7 +214,7 @@ export class PropertyMaterializerService {
 
       return { 
         shouldPush: false, 
-        shouldTeardown: wasActive, // Flag jika hotel turun status dari 1 ke 0
+        shouldTeardown: wasActive, // Flag to trigger teardown if status dropped from active (1) to inactive (0)
         hotelCode: hotel.code, 
         flatData: flatData, 
         deletedSetups: (queryRunner as any).deletedSetups || [],
@@ -229,7 +265,7 @@ export class PropertyMaterializerService {
     }
 
     // 2. Domino Effect: If Room or Rate Plan updates occur, trigger 365-day ARI synchronization
-    if (updateType !== 'HOTEL_UPDATE' && updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE') {
+    if (updateType !== 'HOTEL_UPDATE' && updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE' && updateType !== 'HOTEL_DELETE') {
       const startDate = new Date().toISOString().split('T')[0];
       const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
@@ -239,16 +275,16 @@ export class PropertyMaterializerService {
   }
 
   /**
-   * TEARDOWN FUNCTION
+   * Executes Master Close (Teardown) for deactivated or removed property records.
    */
   async executeTeardown(hotelCode: string, flatData: any[]): Promise<void> {
     this.logger.log(`[TEARDOWN] Executing Master Close for hotel ${hotelCode}.`);
 
-    // Gunakan ROLLING_HORIZON_MONTHS yang sama dengan Cron
+    // Use the same ROLLING_HORIZON_MONTHS configuration as the Cron service
     const horizonMonths = parseInt(this.configService.get('ROLLING_HORIZON_MONTHS', '3'), 10);
     const today = new Date();
     const endDate = new Date(today);
-    endDate.setMonth(endDate.getMonth() + horizonMonths); // Set tanggal akhir sesuai horizon
+    endDate.setMonth(endDate.getMonth() + horizonMonths); // Set target end date according to horizon settings
 
     const combinations = flatData.map(row => ({
       date: today,
