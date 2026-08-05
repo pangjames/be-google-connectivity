@@ -76,8 +76,9 @@ export class PropertyMaterializerService {
       
       // Retrieve the latest setup snapshot for Google Teardown processing
       let deletedSetups = [];
-      if (typeof hotelId === 'number') {
-        deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
+      const numericHotelId = Number(hotelId);
+      if (!isNaN(numericHotelId)) {
+        deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: numericHotelId } });
       } else {
         const hIdStr = String(hotelId);
         deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_code: hIdStr } });
@@ -87,8 +88,8 @@ export class PropertyMaterializerService {
         const hCode = deletedSetups[0].hotel_code;
         
         // Update status to 0 (inactive/deactivated) to signal deactivation to the gatekeeper
-        if (typeof hotelId === 'number') {
-          await manager.update(HotelConnectivitySetup, { hotel_id: hotelId }, { setup_status: 0 });
+        if (!isNaN(numericHotelId)) {
+          await manager.update(HotelConnectivitySetup, { hotel_id: numericHotelId }, { setup_status: 0 });
         } else {
           await manager.update(HotelConnectivitySetup, { hotel_code: String(hotelId) }, { setup_status: 0 });
         }
@@ -109,24 +110,12 @@ export class PropertyMaterializerService {
     // -------------------------------------------------------------------------
     // STAGE 3: Master Entity Verification & Locking (For Update / Create / Partial Delete)
     // -------------------------------------------------------------------------
-    if (updateType === 'HOTEL_UPDATE') {
-      let setupExists: any;
-      if (typeof hotelId === 'number') {
-        setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
-      } else {
-        setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_code: String(hotelId) } });
-      }
-      if (!setupExists) {
-        this.logger.warn(`Hotel ID/Code ${hotelId} has no setup record yet for HOTEL_UPDATE. Skipping synchronization safely.`);
-        return null; 
-      }
-    }
-
     let hotel: Hotel | null;
-    if (typeof hotelId === 'number') {
-      hotel = await manager.findOne(Hotel, { where: { id: hotelId } });
+    const numericHotelId = Number(hotelId);
+    if (!isNaN(numericHotelId)) {
+      hotel = await manager.findOne(Hotel, { where: { id: numericHotelId } });
     } else {
-      hotel = await manager.findOne(Hotel, { where: { code: hotelId } });
+      hotel = await manager.findOne(Hotel, { where: { code: String(hotelId) } });
     }
 
     if (!hotel) {
@@ -153,6 +142,9 @@ export class PropertyMaterializerService {
     // STAGE 4: Precise DB Delta Update Execution (Raw SQL JOIN or DELETE)
     // Executed specifically based on updateType before Gatekeeper reads the snapshot
     // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // STAGE 4: Precise DB Delta Update Execution (UPSERT Logic)
+    // -------------------------------------------------------------------------
     if (updateType === 'ROOM_DELETE') {
       this.logger.log(`[PROPERTY DB UPDATE] Deleting room ID ${entityReference.roomId} for hotel: ${hotel.code}`);
       const deletedSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id, room_type_id: entityReference.roomId } });
@@ -165,56 +157,64 @@ export class PropertyMaterializerService {
       await manager.delete(HotelConnectivitySetup, { hotel_id: hotel.id, rate_plan_id: entityReference.rateId });
       (queryRunner as any).deletedSetups = deletedSetups;
     }
-    else if (updateType === 'HOTEL_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning master hotel profile for hotel: ${hotel.code}`);
+    else if (['HOTEL_UPDATE', 'ROOM_UPDATE', 'RATE_PLAN_UPDATE'].includes(updateType)) {
+      this.logger.log(`[PROPERTY DB UPDATE] Executing UPSERT for ${updateType} on hotel: ${hotel.code}`);
+      
+      let filterSql = '';
+      const params: any[] = [hotel.id];
+
+      if (updateType === 'ROOM_UPDATE') {
+        filterSql = 'AND rt.id = ?';
+        params.push(entityReference.roomId);
+      } else if (updateType === 'RATE_PLAN_UPDATE') {
+        filterSql = 'AND rp.id = ?';
+        params.push(entityReference.rateId);
+      }
+
       await manager.query(
         `
-        UPDATE tb_hotel_connectivity_setup s
-        JOIN tb_hotel h ON s.hotel_id = h.id
+        INSERT INTO tb_hotel_connectivity_setup (
+          hotel_id, hotel_code, hotel_name, property_category, hotel_brand,
+          street_address, city, province, zip_code, country, latitude, longitude, phone,
+          room_type_id, room_type_name, room_capacity, room_smoking, room_view, room_image_url,
+          rate_plan_id, rate_plan_name, breakfast_included, pay_at_hotel, setup_status,
+          created_at, updated_at
+        )
+        SELECT 
+          h.id, h.code, h.name, COALESCE(cat.category_name, 'N/A'), COALESCE(br.brand_name, 'N/A'),
+          h.street_address, h.area, h.region, h.zip_code, 'ID', h.latitude, h.longitude, h.phone,
+          rt.id, rt.name, rt.guest, rt.smoking, rt.view,
+          (SELECT filename FROM tb_hotel_image img WHERE img.hotel_id = h.id AND img.room_type_id = rt.id AND img.type = 1 LIMIT 1),
+          rp.id, rp.name, rp.food, rp.pay_at_hotel, 
+          0 as setup_status, 
+          NOW(), NOW()
+        FROM tb_hotel h
         LEFT JOIN ms_property_category cat ON h.property_category = cat.id
         LEFT JOIN ms_brand br ON h.property_brand = br.id
-        SET 
-          s.hotel_name = h.name,
-          s.property_category = cat.category_name,
-          s.hotel_brand = br.brand_name,
-          s.street_address = h.street_address,
-          s.city = h.area,
-          s.province = h.region,
-          s.latitude = h.latitude,
-          s.longitude = h.longitude,
-          s.phone = h.phone
-        WHERE s.hotel_id = ?
-      `,
-        [hotel.id]
-      );
-    } else if (updateType === 'ROOM_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning room data ID ${entityReference.roomId} for hotel: ${hotel.code}`);
-      await manager.query(
-        `
-        UPDATE tb_hotel_connectivity_setup s
-        JOIN tb_hotel_room_type rt ON s.room_type_id = rt.id
-        SET 
-          s.room_type_name = rt.name,
-          s.room_capacity = rt.guest,
-          s.room_smoking = rt.smoking,
-          s.room_view = rt.view
-        WHERE s.hotel_id = ? AND s.room_type_id = ?
-      `,
-        [hotel.id, entityReference.roomId]
-      );
-    } else if (updateType === 'RATE_PLAN_UPDATE') {
-      this.logger.log(`[PROPERTY DB UPDATE] Aligning rate plan ID ${entityReference.rateId} for hotel: ${hotel.code}`);
-      await manager.query(
-        `
-        UPDATE tb_hotel_connectivity_setup s
-        JOIN tb_hotel_rate_plan rp ON s.rate_plan_id = rp.id
-        SET 
-          s.rate_plan_name = rp.name,
-          s.breakfast_included = rp.food,
-          s.pay_at_hotel = rp.pay_at_hotel
-        WHERE s.hotel_id = ? AND s.rate_plan_id = ?
-      `,
-        [hotel.id, entityReference.rateId]
+        JOIN tb_hotel_room_type rt ON rt.hotel_id = h.id
+        JOIN tb_hotel_rate_plan rp ON rp.room_type_id = rt.id
+        WHERE h.id = ? ${filterSql}
+        ON DUPLICATE KEY UPDATE
+          hotel_name = VALUES(hotel_name),
+          property_category = VALUES(property_category),
+          hotel_brand = VALUES(hotel_brand),
+          street_address = VALUES(street_address),
+          city = VALUES(city),
+          province = VALUES(province),
+          latitude = VALUES(latitude),
+          longitude = VALUES(longitude),
+          phone = VALUES(phone),
+          room_type_name = VALUES(room_type_name),
+          room_capacity = VALUES(room_capacity),
+          room_smoking = VALUES(room_smoking),
+          room_view = VALUES(room_view),
+          room_image_url = VALUES(room_image_url),
+          rate_plan_name = VALUES(rate_plan_name),
+          breakfast_included = VALUES(breakfast_included),
+          pay_at_hotel = VALUES(pay_at_hotel),
+          updated_at = NOW();
+        `,
+        params
       );
     }
 

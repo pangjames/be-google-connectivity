@@ -60,17 +60,23 @@ export class PropertySyncConsumer {
           .createQueryBuilder(Hotel, 'hotel')
           .setLock('pessimistic_write');
           
-        if (typeof hotelId === 'number') {
-          await qb.where('hotel.id = :id', { id: hotelId }).getOne();
+        const numericHotelId = Number(hotelId);
+        if (!isNaN(numericHotelId)) {
+          await qb.where('hotel.id = :id', { id: numericHotelId }).getOne();
         } else {
-          await qb.where('hotel.code = :code', { code: hotelId }).getOne();
+          await qb.where('hotel.code = :code', { code: String(hotelId) }).getOne();
         }
 
         // 2. Execute database processing & validation inside the transaction
         result = await this.propertyMaterializerService.handleExtranetDeltaUpdate(entityReference, updateType, queryRunner);
 
-        this.logger.log(`[DEBUG PROPERTY CONSUMER] handleExtranetDeltaUpdate result: shouldPush=${result?.shouldPush}, shouldTeardown=${result?.shouldTeardown}, hotelCode=${result?.hotelCode}`);
-
+        if (result) {
+          this.logger.log(
+            `[PROPERTY CONSUMER] Executed: shouldPush=${result.shouldPush}, shouldTeardown=${result.shouldTeardown}, hotelCode=${result.hotelCode}`
+          );
+        } else {
+          this.logger.debug(`[PROPERTY CONSUMER] Skipping message for hotel ${hotelId}: Condition/Setup not met.`);
+        }
         await queryRunner.commitTransaction();
       } catch (error) {
         await queryRunner.rollbackTransaction();
