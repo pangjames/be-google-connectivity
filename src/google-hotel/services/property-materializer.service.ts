@@ -38,6 +38,28 @@ export class PropertyMaterializerService {
     // STAGE 1: Input Parameter Validation
     // -------------------------------------------------------------------------
     const hotelId = entityReference?.hotelId;
+    if (!hotelId) {
+      this.logger.warn(`[PROPERTY SYNC SKIPPED] Missing mandatory hotelId in payload. Skipping SQS event safely.`);
+      return null;
+    }
+
+    // Validate supported updateTypes to prevent errors from malformed or unknown payloads
+    const supportedUpdateTypes = ['HOTEL_UPDATE', 'ROOM_UPDATE', 'RATE_PLAN_UPDATE', 'HOTEL_DELETE', 'ROOM_DELETE', 'RATE_PLAN_DELETE'];
+    if (!updateType || !supportedUpdateTypes.includes(updateType)) {
+      this.logger.warn(`[PROPERTY SYNC SKIPPED] Unrecognized or invalid updateType: '${updateType}' for hotel ID/Code: ${hotelId}. Skipping SQS event safely.`);
+      return null;
+    }
+
+    // Validate specific parameters based on updateType
+    if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) {
+      this.logger.warn(`[PROPERTY SYNC SKIPPED] ROOM_UPDATE missing mandatory roomId for hotel ID/Code: ${hotelId}. Skipping safely.`);
+      return null;
+    }
+    if (updateType === 'RATE_PLAN_UPDATE' && (!entityReference.roomId || !entityReference.rateId)) {
+      this.logger.warn(`[PROPERTY SYNC SKIPPED] RATE_PLAN_UPDATE missing roomId or rateId for hotel ID/Code: ${hotelId}. Skipping safely.`);
+      return null;
+    }
+    
     if (!hotelId) throw new Error('hotelId is mandatory');
     if (updateType === 'ROOM_UPDATE' && !entityReference.roomId) throw new Error('ROOM_UPDATE requires roomId');
     if (updateType === 'RATE_PLAN_UPDATE' && (!entityReference.roomId || !entityReference.rateId)) throw new Error('RATE_PLAN_UPDATE requires both roomId and rateId');
@@ -88,9 +110,14 @@ export class PropertyMaterializerService {
     // STAGE 3: Master Entity Verification & Locking (For Update / Create / Partial Delete)
     // -------------------------------------------------------------------------
     if (updateType === 'HOTEL_UPDATE') {
-      const setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
+      let setupExists: any;
+      if (typeof hotelId === 'number') {
+        setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotelId } });
+      } else {
+        setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_code: String(hotelId) } });
+      }
       if (!setupExists) {
-        this.logger.warn(`Hotel ID ${hotelId} has no setup record yet for HOTEL_UPDATE. Skipping synchronization safely.`);
+        this.logger.warn(`Hotel ID/Code ${hotelId} has no setup record yet for HOTEL_UPDATE. Skipping synchronization safely.`);
         return null; 
       }
     }
@@ -103,7 +130,8 @@ export class PropertyMaterializerService {
     }
 
     if (!hotel) {
-      throw new Error(`Hotel not found for ID/Code: ${hotelId}`);
+      this.logger.warn(`[PROPERTY SYNC SKIPPED] Hotel not found for ID/Code: ${hotelId}. Skipping SQS event safely.`);
+      return null;
     }
 
     // Auto-Bootstrap: Ensure connectivity setup record exists
@@ -139,11 +167,6 @@ export class PropertyMaterializerService {
     }
     else if (updateType === 'HOTEL_UPDATE') {
       this.logger.log(`[PROPERTY DB UPDATE] Aligning master hotel profile for hotel: ${hotel.code}`);
-      const setupExists = await manager.findOne(HotelConnectivitySetup, { where: { hotel_id: hotel.id } });
-      if (!setupExists) {
-        this.logger.warn(`Hotel ID ${hotel.id} has no setup record yet for HOTEL_UPDATE. Skipping synchronization.`);
-        return null;
-      }
       await manager.query(
         `
         UPDATE tb_hotel_connectivity_setup s
@@ -196,14 +219,13 @@ export class PropertyMaterializerService {
     }
 
     // -------------------------------------------------------------------------
-    // STAGE 5: Latest Snapshot Retrieval & Strict Gatekeeper Validation
-    // Utilizing TypeORM Entity (HotelConnectivitySetup) for type-safety
+    // STAGE 5: Gatekeeper Validation & Activation Logic
     // -------------------------------------------------------------------------
     const flatData = await manager.find(HotelConnectivitySetup, {
       where: { hotel_code: hotel.code },
     });
 
-    // Check if this hotel was previously active (setup_status = 1)
+    // Check if this hotel was PREVIOUSLY active (contains setup_status = 1)
     const wasActive = flatData.some(row => row.setup_status === 1);
     const isAllValid = flatData.length > 0 && flatData.every((row: HotelConnectivitySetup) => this.validateGatekeeper(row) === 1);
 
@@ -214,7 +236,7 @@ export class PropertyMaterializerService {
 
       return { 
         shouldPush: false, 
-        shouldTeardown: wasActive, // Flag to trigger teardown if status dropped from active (1) to inactive (0)
+        shouldTeardown: wasActive,
         hotelCode: hotel.code, 
         flatData: flatData, 
         deletedSetups: (queryRunner as any).deletedSetups || [],

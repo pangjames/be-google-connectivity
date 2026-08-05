@@ -26,7 +26,7 @@ export class PromotionCronService {
         .leftJoinAndSelect('p.blackouts', 'b', 'b.type = 0 AND b.date_blackout = :today', { today: todayStr })
         .where('p.promo_status = 1 AND p.promo_type = 1')
         .andWhere(
-          '(p.end_date < :today OR b.date_blackout = :today)',
+          '(p.end_date < :today OR b.id IS NOT NULL)',
           { today: todayStr },
         )
         .getMany();

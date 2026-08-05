@@ -37,6 +37,14 @@ class RatePlanUpdateDto {
   updateType: string;
 }
 
+class HotelDeleteDto {
+  @ApiProperty({ example: { hotelId: 108 } })
+  entityReference: { hotelId: number };
+  
+  @ApiProperty({ example: 'HOTEL_DELETE' })
+  updateType: string;
+}
+
 class AriChangeDto {
   @ApiProperty({ example: 'H001' })
   hotelCode: string;
@@ -174,6 +182,13 @@ export class TestSQSController {
   @ApiOperation({ summary: 'Test SQS: RATE_PLAN_UPDATE' })
   @ApiBody({ type: RatePlanUpdateDto })
   async testRatePlanUpdate(@Body() body: RatePlanUpdateDto) {
+    return this.dispatch(body);
+  }
+
+  @Post('hotel-delete')
+  @ApiOperation({ summary: 'Test SQS: HOTEL_DELETE' })
+  @ApiBody({ type: HotelDeleteDto })
+  async testHotelDelete(@Body() body: HotelDeleteDto) {
     return this.dispatch(body);
   }
 

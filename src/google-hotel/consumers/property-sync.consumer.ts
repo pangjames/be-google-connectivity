@@ -19,8 +19,27 @@ export class PropertySyncConsumer {
    */
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
-      const { entityReference, updateType } = JSON.parse(message.Body as string);
+      // 1. SAFE PARSING: Catch JSON formatting errors without triggering SQS retries
+      let payload: any;
+      try {
+        payload = typeof message.Body === 'string' ? JSON.parse(message.Body) : message.Body;
+      } catch (parseErr) {
+        this.logger.warn(`[PROPERTY CONSUMER SKIPPED] Invalid JSON payload in Message ID: ${message.MessageId}. Message discarded.`);
+        continue;
+      }
+
+      if (!payload || !payload.entityReference) {
+        this.logger.warn(`[PROPERTY CONSUMER SKIPPED] Missing entityReference or empty payload in Message ID: ${message.MessageId}`);
+        continue;
+      }
+
+      const { entityReference, updateType } = payload;
       const hotelId = entityReference?.hotelId;
+
+      if (!hotelId) {
+        this.logger.warn(`[PROPERTY CONSUMER SKIPPED] Missing mandatory hotelId in entityReference.`);
+        continue;
+      }
 
       const queryRunner = this.dataSource.createQueryRunner();
       await queryRunner.connect();
@@ -47,8 +66,10 @@ export class PropertySyncConsumer {
           await qb.where('hotel.code = :code', { code: hotelId }).getOne();
         }
 
-        // 1. Execute database processing & validation inside the transaction
+        // 2. Execute database processing & validation inside the transaction
         result = await this.propertyMaterializerService.handleExtranetDeltaUpdate(entityReference, updateType, queryRunner);
+
+        this.logger.log(`[DEBUG PROPERTY CONSUMER] handleExtranetDeltaUpdate result: shouldPush=${result?.shouldPush}, shouldTeardown=${result?.shouldTeardown}, hotelCode=${result?.hotelCode}`);
 
         await queryRunner.commitTransaction();
       } catch (error) {
@@ -59,7 +80,7 @@ export class PropertySyncConsumer {
         await queryRunner.release();
       }
 
-      // 2. Execute external API calls outside of the database transaction
+      // 3. Execute external API calls outside of the database transaction
       if (result) {
         if (result.shouldPush) {
           try {

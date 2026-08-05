@@ -20,6 +20,12 @@ export class CalendarMaterializerService {
     roomTypeId?: number,
     ratePlanId?: number
   ): Promise<void> {
+    // 1. PARAMETER VALIDATION
+    if (!hotelCode || !startDate || !endDate) {
+      this.logger.warn(`[CALENDAR MATERIALIZE SKIPPED] Missing mandatory parameters (hotelCode, startDate, endDate). Input: ${hotelCode}, ${startDate}, ${endDate}`);
+      return; // Skip gracefully without throwing an exception
+    }
+
     this.logger.log(`Materializing calendar for hotel ${hotelCode} from ${startDate} to ${endDate}`);
 
     let localQueryRunner = false;

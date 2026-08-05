@@ -28,16 +28,34 @@ export class GoogleAriSyncConsumer {
 
   async handleBatchMessages(messages: Message[]) {
     for (const message of messages) {
-      // 1. Ekstrak payload mentah dari SQS
-      const payload = JSON.parse(message.Body as string);
+      // 1. SAFE PARSING: Extract raw SQS payload
+      let payload;
+      try {
+        payload = typeof message.Body === 'string' ? JSON.parse(message.Body) : message.Body;
+      } catch (err) {
+        this.logger.warn(`[ARI SYNC SKIPPED] Invalid JSON. Skipping this SQS message.`);
+        continue;
+      }
+
+      if (!payload) {
+        this.logger.warn(`[ARI SYNC SKIPPED] Empty payload.`);
+        continue;
+      }
+
       const { hotelCode, roomId, rateId, updateType } = payload;
       
-      // 2. Fallback handling untuk menyelaraskan parameter tanggal tunggal (Delta Sync)
+      // 2. Mandatory Parameter Validation
+      if (!hotelCode) {
+        this.logger.warn(`[ARI SYNC SKIPPED] hotelCode not found in payload.`);
+        continue;
+      }
+
+      // Fallback handling to align single date parameters (Delta Sync)
       const startDate = payload.startDate || payload.date;
       const endDate = payload.endDate || payload.date;
 
       if (!startDate || !endDate) {
-        this.logger.error(`[LEWATKAN] Sinkronisasi dibatalkan. Parameter tanggal tidak lengkap untuk hotel: ${hotelCode}`);
+        this.logger.warn(`[ARI SYNC SKIPPED] Sync cancelled. Incomplete date parameters for hotel: ${hotelCode}`);
         continue;
       }
       
@@ -46,22 +64,22 @@ export class GoogleAriSyncConsumer {
       await queryRunner.startTransaction();
 
       try {
-        this.logger.log(`Memulai sinkronisasi [${updateType || 'FULL_SYNC'}] untuk hotel: ${hotelCode} (${startDate} s/d ${endDate})`);
+        this.logger.log(`Starting sync [${updateType || 'FULL_SYNC'}] for hotel: ${hotelCode} (${startDate} to ${endDate})`);
 
-        // 1. Pessimistic Lock untuk sinkronisasi ARI
+        // 1. Pessimistic Lock for ARI synchronization
         await queryRunner.manager
           .createQueryBuilder(Hotel, 'hotel')
           .setLock('pessimistic_write')
           .where('hotel.code = :code', { code: hotelCode })
           .getOne();
 
-        // 2. Materialize dengan parameter opsional
+        // 2. Materialize with optional parameters
         await this.materializer.materialize(hotelCode, startDate, endDate, queryRunner, roomId, rateId);
         
-        // 3. Ambil data hasil materialisasi
+        // 3. Fetch materialized inventory data
         const inventories = await this.calendarRepo.getInventoriesForDateRange(hotelCode, startDate, endDate, queryRunner, roomId, rateId);
         
-        // 4. Push ke Google dengan Rate Limiter
+        // 4. Push to Google with Rate Limiter
         if (inventories?.length > 0) {
           await this.limiter.schedule(async () => {
             await this.googleApi.pushPayload(hotelCode, RateBuilder.buildRateAmountNotifRQ(hotelCode, inventories), 'Rate');
@@ -71,11 +89,11 @@ export class GoogleAriSyncConsumer {
         }
 
         await queryRunner.commitTransaction();
-        this.logger.log(`[SUKSES] Sinkronisasi selesai untuk hotel: ${hotelCode}`);
+        this.logger.log(`[SUCCESS] Sync completed for hotel: ${hotelCode}`);
 
       } catch (error) {
         await queryRunner.rollbackTransaction();
-        this.logger.error(`[GAGAL] Sinkronisasi ARI untuk hotel ${hotelCode}:`, error);
+        this.logger.error(`[FAILED] ARI Sync for hotel ${hotelCode}:`, error);
         throw error; // Trigger SQS retry
       } finally {
         await queryRunner.release();

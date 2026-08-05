@@ -21,9 +21,20 @@ export class PromotionSyncConsumer {
 
   async handleBatchMessages(messages: Message[]): Promise<void> {
     for (const msg of messages) {
+      let body;
       try {
-        const body = typeof msg.Body === 'string' ? JSON.parse(msg.Body) : msg.Body;
-        
+        body = typeof msg.Body === 'string' ? JSON.parse(msg.Body) : msg.Body;
+      } catch (err) {
+        this.logger.warn(`[PROMOTION CONSUMER SKIPPED] Invalid JSON Body.`);
+        continue;
+      }
+
+      if (!body) {
+        this.logger.warn(`[PROMOTION CONSUMER SKIPPED] Empty Body.`);
+        continue;
+      }
+
+      try {
         const hotelId = body.hotelId || body.entityReference?.hotelId;
         let hotelCode = body.hotelCode || body.entityReference?.hotelCode;
         const promotionId = body.promotionId || body.entityReference?.promotionId;
@@ -34,7 +45,7 @@ export class PromotionSyncConsumer {
           continue;
         }
 
-        // --- KASUS A: GLOBAL BROADCAST DELETE (Tanpa hotelId/hotelCode) ---
+        // --- CASE A: GLOBAL BROADCAST DELETE (Without hotelId/hotelCode) ---
         if (action === 'delete' && !hotelId && !hotelCode) {
           this.logger.log(`[PROMOTION BROADCAST DELETE] Processing global delete for Promo ID: ${promotionId}`);
 
@@ -51,8 +62,8 @@ export class PromotionSyncConsumer {
           continue;
         }
 
-        // --- KASUS B: SPECIFIC HOTEL (Upsert / Delete 1 Hotel) ---
-        // Jika hotelCode belum ada tapi hotelId ada (dan numerik), cari hotelCode dari DB setup
+        // --- CASE B: SPECIFIC HOTEL (Upsert / Delete 1 Hotel) ---
+        // If hotelCode is missing but hotelId is present (and numeric), lookup hotelCode from setup DB
         if (!hotelCode && hotelId && !isNaN(Number(hotelId))) {
           const setup = await this.setupRepo.findOne({
             where: { hotel_id: Number(hotelId) },
