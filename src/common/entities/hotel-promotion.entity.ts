@@ -8,19 +8,19 @@ export class HotelPromotion {
   id: number;
 
   @Column({ type: 'int' })
-  role: number; // 0=All hotel, 1=spesific hotel
+  role: number; // 0 = Global (All Hotels / Exclude list), 1 = Specific Hotel (Whitelist)
 
   @Column({ type: 'int', nullable: true })
   hotel_id: number;
 
   @Column({ type: 'int' })
-  promo_type: number; // 0=coupon, 1=customize deals
+  promo_type: number; // 0 = Coupon, 1 = Customize deals
 
   @Column({ type: 'int', default: 1 })
-  promo_status: number; // 0=Non-Active, 1=Active
+  promo_status: number; // 0 = Non-Active, 1 = Active
 
   @Column({ type: 'int' })
-  type: number; // 0=percentage, 1=fix amount
+  type: number; // 0 = Percentage, 1 = Fixed amount
 
   @Column({ type: 'varchar', length: 255 })
   title: string;
@@ -32,7 +32,7 @@ export class HotelPromotion {
   trx_min: number;
 
   @Column({ type: 'int' })
-  target: number; // 0 = Publik / All
+  target: number; // 0 = Public / All
 
   @Column({ type: 'date', nullable: true })
   start_date: string;
