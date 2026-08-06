@@ -45,21 +45,62 @@ export class PromotionSyncConsumer {
           continue;
         }
 
-        // --- CASE A: GLOBAL BROADCAST DELETE (Without hotelId/hotelCode) ---
-        if (action === 'delete' && !hotelId && !hotelCode) {
-          this.logger.log(`[PROMOTION BROADCAST DELETE] Processing global delete for Promo ID: ${promotionId}`);
+        // --- CASE A: GLOBAL BROADCAST (Upsert & Delete) ---
+        if (!hotelId && !hotelCode) {
+          this.logger.log(`[PROMOTION BROADCAST] Processing global ${action} for Promo ID: ${promotionId}`);
 
-          const activeSetups = await this.setupRepo.createQueryBuilder('s')
-            .select('DISTINCT s.hotel_code', 'hotel_code')
-            .where('s.setup_status = 1')
-            .getRawMany();
+          // 1. Ambil semua hotel yang aktif
+          const activeSetups = await this.setupRepo.find({
+            where: { setup_status: 1 },
+            select: { hotel_code: true, hotel_id: true },
+          });
 
-          for (const item of activeSetups) {
-            const targetCode = item.hotel_code;
-            const xmlPayload = this.promoMaterializer.materialize(targetCode, { id: promotionId } as any, 'delete');
-            await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
+          // 2. Hilangkan duplikasi hotel (karena 1 hotel bisa punya banyak setup room/rate)
+          const uniqueHotels = new Map<string, number>();
+          activeSetups.forEach((setup) => uniqueHotels.set(setup.hotel_code, setup.hotel_id));
+
+          let promoEntity = null;
+          const blacklistHotelIds = new Set<number>();
+
+          // 3. Jika Upsert, ambil data promo untuk mengecek daftar exclude (blacklist)
+          if (action === 'upsert') {
+            // Null dikirim sebagai hotelId karena kita menarik master data promo-nya saja
+            promoEntity = await this.promoRepo.getPromotionData(null, promotionId, action);
+            
+            if (!promoEntity) {
+              this.logger.warn(`[PROMOTION CONSUMER] Skipping global broadcast, promoEntity not found: ${promotionId}`);
+              continue;
+            }
+            
+            // 4. Kumpulkan ID hotel yang di-exclude (berada di tabel applies saat role = 0)
+            if (promoEntity.role === 0 && promoEntity.applies) {
+              promoEntity.applies.forEach((app) => {
+                if (app.hotel_id) blacklistHotelIds.add(Number(app.hotel_id));
+              });
+            }
           }
-          continue;
+
+          // 5. Looping dan kirim XML ke masing-masing hotel secara massal
+          for (const [targetCode, targetId] of uniqueHotels.entries()) {
+            let xmlPayload = null;
+
+            if (action === 'delete') {
+              xmlPayload = this.promoMaterializer.materialize(targetCode, { id: promotionId } as any, 'delete');
+            } else if (action === 'upsert' && promoEntity) {
+              // Validasi Blacklist: Jika hotel masuk dalam daftar pengecualian, cabut/jangan beri promo!
+              if (blacklistHotelIds.has(targetId)) {
+                this.logger.log(`[PROMOTION EXCLUDE] Hotel ${targetCode} is blacklisted. Sending DELETE XML.`);
+                xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, 'delete');
+              } else {
+                xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, 'upsert');
+              }
+            }
+
+            if (xmlPayload) {
+              await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
+            }
+          }
+          continue; // Lanjut ke antrean pesan SQS berikutnya
         }
 
         // --- CASE B: SPECIFIC HOTEL (Upsert / Delete 1 Hotel) ---
