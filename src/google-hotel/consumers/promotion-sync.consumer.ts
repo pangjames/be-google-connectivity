@@ -35,59 +35,56 @@ export class PromotionSyncConsumer {
       }
 
       try {
-        const hotelId = body.hotelId || body.entityReference?.hotelId;
-        let hotelCode = body.hotelCode || body.entityReference?.hotelCode;
         const promotionId = body.promotionId || body.entityReference?.promotionId;
-        const action = body.action || body.entityReference?.action;
+        const updateType = body.updateType || body.entityReference?.updateType;
 
         if (!promotionId) {
           this.logger.warn(`[PROMOTION CONSUMER] Skipping message due to missing promotionId: ${msg.Body}`);
           continue;
         }
 
-        // --- CASE A: GLOBAL BROADCAST (Upsert & Delete) ---
-        if (!hotelId && !hotelCode) {
-          this.logger.log(`[PROMOTION BROADCAST] Processing global ${action} for Promo ID: ${promotionId}`);
+        const action = updateType === 'PROMOTION_DELETE' ? 'delete' : 'upsert';
+        this.logger.log(`[PROMOTION EVENT] Processing Promo ID: ${promotionId}, event: ${updateType} (derived action: ${action})`);
 
-          // 1. Ambil semua hotel yang aktif
+        // Fetch master data of the promotion from NestJS database first
+        const promoEntity = await this.promoRepo.getPromotionData(null, promotionId, action);
+        if (!promoEntity) {
+          this.logger.warn(`[PROMOTION CONSUMER] Skipping event, promoEntity not found in DB: ${promotionId}`);
+          continue;
+        }
+
+        // Determine target hotels based on promotion role (Global vs Specific)
+        const isGlobal = promoEntity.role === undefined || Number(promoEntity.role) === 0;
+
+        if (isGlobal) {
+          // --- ROLE 0: GLOBAL BROADCAST ---
+          this.logger.log(`[PROMOTION BROADCAST] Distributing global promotion ID: ${promotionId} (action: ${action})`);
+
+          // 1. Get all active hotels from setup database
           const activeSetups = await this.setupRepo.find({
             where: { setup_status: 1 },
             select: { hotel_code: true, hotel_id: true },
           });
 
-          // 2. Hilangkan duplikasi hotel (karena 1 hotel bisa punya banyak setup room/rate)
+          // 2. Remove duplicates
           const uniqueHotels = new Map<string, number>();
           activeSetups.forEach((setup) => uniqueHotels.set(setup.hotel_code, setup.hotel_id));
 
-          let promoEntity = null;
+          // 3. Collect blacklisted hotel IDs (from applies table when role = 0)
           const blacklistHotelIds = new Set<number>();
-
-          // 3. Jika Upsert, ambil data promo untuk mengecek daftar exclude (blacklist)
-          if (action === 'upsert') {
-            // Null dikirim sebagai hotelId karena kita menarik master data promo-nya saja
-            promoEntity = await this.promoRepo.getPromotionData(null, promotionId, action);
-            
-            if (!promoEntity) {
-              this.logger.warn(`[PROMOTION CONSUMER] Skipping global broadcast, promoEntity not found: ${promotionId}`);
-              continue;
-            }
-            
-            // 4. Kumpulkan ID hotel yang di-exclude (berada di tabel applies saat role = 0)
-            if (promoEntity.role === 0 && promoEntity.applies) {
-              promoEntity.applies.forEach((app) => {
-                if (app.hotel_id) blacklistHotelIds.add(Number(app.hotel_id));
-              });
-            }
+          if (action === 'upsert' && promoEntity.applies) {
+            promoEntity.applies.forEach((app) => {
+              if (app.hotel_id) blacklistHotelIds.add(Number(app.hotel_id));
+            });
           }
 
-          // 5. Looping dan kirim XML ke masing-masing hotel secara massal
+          // 4. Send XML payloads to all target hotels
           for (const [targetCode, targetId] of uniqueHotels.entries()) {
             let xmlPayload = null;
 
             if (action === 'delete') {
-              xmlPayload = this.promoMaterializer.materialize(targetCode, { id: promotionId } as any, 'delete');
-            } else if (action === 'upsert' && promoEntity) {
-              // Validasi Blacklist: Jika hotel masuk dalam daftar pengecualian, cabut/jangan beri promo!
+              xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, 'delete');
+            } else if (action === 'upsert') {
               if (blacklistHotelIds.has(targetId)) {
                 this.logger.log(`[PROMOTION EXCLUDE] Hotel ${targetCode} is blacklisted. Sending DELETE XML.`);
                 xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, 'delete');
@@ -100,43 +97,33 @@ export class PromotionSyncConsumer {
               await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
             }
           }
-          continue; // Lanjut ke antrean pesan SQS berikutnya
-        }
+        } else {
+          // --- ROLE 1: SPECIFIC HOTEL ---
+          const hotelId = promoEntity.hotel_id;
+          if (!hotelId) {
+            this.logger.warn(`[PROMOTION CONSUMER] Specific promotion ID: ${promotionId} is missing hotel_id. Skipping event.`);
+            continue;
+          }
 
-        // --- CASE B: SPECIFIC HOTEL (Upsert / Delete 1 Hotel) ---
-        // If hotelCode is missing but hotelId is present (and numeric), lookup hotelCode from setup DB
-        if (!hotelCode && hotelId && !isNaN(Number(hotelId))) {
+          // Retrieve hotel code
           const setup = await this.setupRepo.findOne({
-            where: { hotel_id: Number(hotelId) },
+            where: { hotel_id: hotelId },
             select: { hotel_code: true },
           });
-          if (setup) {
-            hotelCode = setup.hotel_code;
+
+          if (!setup) {
+            this.logger.warn(`[PROMOTION CONSUMER] Setup record not found for hotel ID: ${hotelId}. Skipping event.`);
+            continue;
+          }
+
+          const targetCode = setup.hotel_code;
+          this.logger.log(`[PROMOTION SPECIFIC] Distributing specific promotion ID: ${promotionId} to Hotel: ${targetCode} (action: ${action})`);
+
+          const xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, action);
+          if (xmlPayload) {
+            await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
           }
         }
-
-        const targetIdentifier = hotelCode || (hotelId ? String(hotelId) : null);
-        if (!targetIdentifier) {
-          this.logger.warn(`[PROMOTION CONSUMER] Skipping message due to missing hotel target: ${msg.Body}`);
-          continue;
-        }
-
-        this.logger.log(`[PROMOTION CONSUMER] Processing PromoID: ${promotionId} for Hotel: ${targetIdentifier}`);
-
-        const promoEntity = await this.promoRepo.getPromotionData(hotelId, promotionId, action);
-        if (!promoEntity) {
-          this.logger.warn(`[PROMOTION CONSUMER] Skipping message due to missing promoEntity: ${promotionId}`);
-          continue;
-        }
-
-        const xmlPayload = this.promoMaterializer.materialize(targetIdentifier, promoEntity, action);
-
-        if (!xmlPayload) {
-          this.logger.warn(`[PROMOTION CONSUMER] Promotion XML payload empty for Promo ID ${promotionId}`);
-          continue;
-        }
-
-        await this.googleApiService.pushPayload(targetIdentifier, xmlPayload, 'Promotions');
 
       } catch (error: any) {
         this.logger.error(`[PROMOTION CONSUMER ERROR] Failed to process promotion SQS message`, error.stack);

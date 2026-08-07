@@ -38,17 +38,35 @@ export class GoogleDispatcherConsumer {
           continue;
         }
 
-        if (payload.promotionId || payload.updateType === 'PROMOTION_UPDATE') {
-          this.logger.log(`[ROUTE: PROMOTION] Message ID: ${message.MessageId} forwarded to PromotionSyncConsumer`);
-          await this.promotionSyncConsumer.handleBatchMessages([message]);
-        } else if (payload.entityReference) {
-          this.logger.log(`[ROUTE: PROPERTY] Message ID: ${message.MessageId} forwarded to PropertySyncConsumer`);
-          await this.propertySyncConsumer.handleBatchMessages([message]);
-        } else if (payload.hotelCode) {
-          this.logger.log(`[ROUTE: ARI] Message ID: ${message.MessageId} forwarded to GoogleAriSyncConsumer`);
-          await this.googleAriSyncConsumer.handleBatchMessages([message]);
+        const type = payload.updateType;
+
+        if (type && typeof type === 'string') {
+          if (type.startsWith('PROMOTION_')) {
+            this.logger.log(`[ROUTE: PROMOTION] Message ID: ${message.MessageId} forwarded to PromotionSyncConsumer (Type: ${type})`);
+            await this.promotionSyncConsumer.handleBatchMessages([message]);
+          } else if (['HOTEL_UPDATE', 'ROOM_UPDATE', 'RATE_PLAN_UPDATE', 'HOTEL_DELETE', 'ROOM_DELETE', 'RATE_PLAN_DELETE'].includes(type)) {
+            this.logger.log(`[ROUTE: PROPERTY] Message ID: ${message.MessageId} forwarded to PropertySyncConsumer (Type: ${type})`);
+            await this.propertySyncConsumer.handleBatchMessages([message]);
+          } else if (['ARI_CHANGE', 'DELTA_SYNC', 'MANUAL_SYNC'].includes(type)) {
+            this.logger.log(`[ROUTE: ARI] Message ID: ${message.MessageId} forwarded to GoogleAriSyncConsumer (Type: ${type})`);
+            await this.googleAriSyncConsumer.handleBatchMessages([message]);
+          } else {
+            this.logger.warn(`[ROUTE: UNKNOWN] Unrecognized updateType: ${type}`);
+          }
         } else {
-          this.logger.warn(`[ROUTE: UNKNOWN] Unrecognized payload format: ${message.Body}`);
+          // Fallback Routing for legacy payloads
+          if (payload.promotionId) {
+            this.logger.log(`[ROUTE: PROMOTION LEGACY] Message ID: ${message.MessageId} forwarded to PromotionSyncConsumer`);
+            await this.promotionSyncConsumer.handleBatchMessages([message]);
+          } else if (payload.entityReference) {
+            this.logger.log(`[ROUTE: PROPERTY LEGACY] Message ID: ${message.MessageId} forwarded to PropertySyncConsumer`);
+            await this.propertySyncConsumer.handleBatchMessages([message]);
+          } else if (payload.hotelCode) {
+            this.logger.log(`[ROUTE: ARI LEGACY] Message ID: ${message.MessageId} forwarded to GoogleAriSyncConsumer`);
+            await this.googleAriSyncConsumer.handleBatchMessages([message]);
+          } else {
+            this.logger.warn(`[ROUTE: UNKNOWN] Unrecognized legacy payload format: ${message.Body}`);
+          }
         }
 
       } catch (err: any) {

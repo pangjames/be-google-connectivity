@@ -73,27 +73,17 @@ export class GoogleDispatcherService {
     }
   }
 
-  /**
-   * Fungsi untuk mengirim perintah sinkronisasi promosi ke AWS SQS FIFO
-   */
   async dispatchPromotionCommand(
-    hotelId: string | number | null | undefined,
     promotionId: number,
-    action?: string,
-    hotelCode?: string
+    updateType: 'PROMOTION_UPDATE' | 'PROMOTION_DELETE' = 'PROMOTION_UPDATE'
   ) {
     const payload = { 
-      entityReference: {
-        hotelId,
-        hotelCode,
-        promotionId,
-        action
-      },
-      updateType: 'PROMOTION_UPDATE' 
+      promotionId,
+      updateType
     };
 
     if (this.useMock) {
-      this.logger.log(`[SQS MOCK DISPATCH] Directly invoking GoogleDispatcherConsumer for promo ID: ${promotionId}`);
+      this.logger.log(`[SQS MOCK DISPATCH] Directly invoking GoogleDispatcherConsumer for promo ID: ${promotionId} (${updateType})`);
       const mockMessage = {
         Body: JSON.stringify(payload),
         MessageId: `mock-dispatch-promo-${Date.now()}`,
@@ -115,7 +105,7 @@ export class GoogleDispatcherService {
       });
 
       await this.sqsClient.send(command);
-      this.logger.log(`[SQS DISPATCH] Promotion sync queued for promo: ${promotionId}`);
+      this.logger.log(`[SQS DISPATCH] Promotion sync queued for promo: ${promotionId} (${updateType})`);
     } catch (error) {
       this.logger.error(`[SQS ERROR] Gagal mengirim pesan promo ke SQS:`, error);
       throw error;

@@ -90,26 +90,12 @@ class ManualSyncDto {
   updateType: string;
 }
 
-class PromotionEntityRefDto {
-  @ApiProperty({ example: 108, required: false, description: 'Leave empty if it is a Global Promo' })
-  hotelId?: number;
-
-  @ApiProperty({ example: 'YK.143-V1Testing2', required: false, description: 'Leave empty if it is a Global Promo' })
-  hotelCode?: string;
-
-  @ApiProperty({ example: 45 })
+class PromotionSyncDto {
+  @ApiProperty({ example: 250 })
   promotionId: number;
 
-  @ApiProperty({ example: 'delete', enum: ['upsert', 'delete'] })
-  action: 'upsert' | 'delete';
-}
-
-class PromotionUpdateDto {
-  @ApiProperty({ type: PromotionEntityRefDto })
-  entityReference: PromotionEntityRefDto;
-
-  @ApiProperty({ example: 'PROMOTION_UPDATE' })
-  updateType: string;
+  @ApiProperty({ example: 'PROMOTION_UPDATE', enum: ['PROMOTION_UPDATE', 'PROMOTION_DELETE'] })
+  updateType: 'PROMOTION_UPDATE' | 'PROMOTION_DELETE';
 }
 
 @ApiTags('AWS SQS Test Triggers')
@@ -213,10 +199,10 @@ export class TestSQSController {
     return this.dispatch(body);
   }
 
-  @Post('promotion-update')
-  @ApiOperation({ summary: 'Test SQS: PROMOTION_UPDATE' })
-  @ApiBody({ type: PromotionUpdateDto })
-  async testPromotionUpdate(@Body() body: PromotionUpdateDto) {
+  @Post('promotion-sync')
+  @ApiOperation({ summary: 'Test SQS: PROMOTION_SYNC (Event-Driven)' })
+  @ApiBody({ type: PromotionSyncDto })
+  async testPromotionSync(@Body() body: PromotionSyncDto) {
     return this.dispatch(body);
   }
 }

@@ -40,16 +40,13 @@ export class PromotionCronService {
 
       for (const promo of promotionsToUpdate) {
         try {
-          const targetHotelId = promo.hotel_id;
-
           // Kirim perintah promo delete ke SQS melalui dispatcher
           await this.googleDispatcherService.dispatchPromotionCommand(
-            targetHotelId, // Boleh null/undefined untuk role = 0 (Global Promo)
             promo.id,
-            'delete'
+            'PROMOTION_DELETE'
           );
 
-          this.logger.log(`Successfully queued delete action for Promo ID: ${promo.id}, Hotel ID: ${targetHotelId}`);
+          this.logger.log(`Successfully queued delete action for Promo ID: ${promo.id}`);
         } catch (error: any) {
           this.logger.error(`Failed to queue delete action for Promo ID: ${promo.id}`, error.stack);
         }

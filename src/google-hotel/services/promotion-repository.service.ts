@@ -1,10 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Brackets } from 'typeorm';
 import { HotelPromotion } from '../../common/entities/hotel-promotion.entity';
 
 @Injectable()
 export class PromotionRepositoryService {
+  private readonly logger = new Logger(PromotionRepositoryService.name);
+
   constructor(
     @InjectRepository(HotelPromotion)
     private readonly repo: Repository<HotelPromotion>,
@@ -53,7 +55,8 @@ export class PromotionRepositoryService {
     const promo = await qb.getOne();
 
     if (!promo) {
-      throw new NotFoundException(`Promotion ID ${promotionId} not found or invalid.`);
+      this.logger.warn(`Promotion ID ${promotionId} not found or invalid.`);
+      return null;
     }
     return promo;
   }
