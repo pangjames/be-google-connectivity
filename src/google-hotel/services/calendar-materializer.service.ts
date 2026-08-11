@@ -74,8 +74,8 @@ export class CalendarMaterializerService {
         WHERE date < DATE(?)
       )
       SELECT
-        th.id AS hotel_id,
-        th.code AS hotel_code,
+        setup.hotel_id AS hotel_id,
+        setup.hotel_code AS hotel_code,
         rt.id AS room_type_id,
         rp.id AS rate_plan_id,
         dr.date,
@@ -86,12 +86,16 @@ export class CalendarMaterializerService {
         IFNULL(rc.ctd, 0) as restriction_departure,
         COALESCE(rc.min_stay, rp.min_night) as set_min_los
       FROM tb_hotel_room_type rt
-      LEFT JOIN tb_hotel th ON rt.hotel_id = th.id
-      LEFT JOIN tb_hotel_rate_plan rp ON rp.room_type_id = rt.id
+      JOIN tb_hotel_connectivity_setup setup 
+        ON setup.room_type_id = rt.id 
+        AND setup.setup_status = 1
+      JOIN tb_hotel_rate_plan rp 
+        ON rp.room_type_id = rt.id 
+        AND setup.rate_plan_id = rp.id
       CROSS JOIN date_range dr
       LEFT JOIN tb_hotel_rate_custom rc
         ON rc.rate_plan_id = rp.id AND rc.date = dr.date
-      WHERE th.code = ? ${filterConditions}
+      WHERE setup.hotel_code = ? ${filterConditions}
       ON DUPLICATE KEY UPDATE
         total_amount_after_tax = VALUES(total_amount_after_tax),
         inv_count = VALUES(inv_count),

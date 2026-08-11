@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Hotel } from '../../common/entities/hotel.entity';
+import { HotelConnectivitySetup } from '../../common/entities/hotel-connectivity-setup.entity';
 import { GoogleSyncService } from '../services/google-sync.service';
 import { CalendarRepositoryService } from '../services/calendar-repository.service';
 import { ConfigService } from '@nestjs/config';
@@ -12,14 +12,15 @@ export class GoogleHorizonCron {
   private readonly logger = new Logger(GoogleHorizonCron.name);
 
   constructor(
-    @InjectRepository(Hotel)
-    private readonly hotelRepo: Repository<Hotel>,
+    @InjectRepository(HotelConnectivitySetup)
+    private readonly setupRepo: Repository<HotelConnectivitySetup>,
     private readonly googleSyncService: GoogleSyncService,
     private readonly calendarRepo: CalendarRepositoryService,
     private readonly configService: ConfigService,
   ) {}
 
   @Cron('0 1 * * *')
+  // @Cron('* * * * *')
   async handleCron() {
     this.logger.log('Starting nightly Google Horizon Cron (Rolling Horizon Extension)');
     
@@ -30,15 +31,12 @@ export class GoogleHorizonCron {
       this.logger.error('Failed to purge historical data', error.stack);
     }
 
-    const activeHotels = await this.hotelRepo.createQueryBuilder('hotel')
-      .innerJoin(
-        'tb_hotel_connectivity_setup', 
-        'setup', 
-        'setup.hotel_code = hotel.code AND setup.setup_status = 1'
-      )
-      .where('hotel.status = 1')
-      .select(['hotel.code'])
-      .getMany();
+    const activeSetups = await this.setupRepo.createQueryBuilder('setup')
+      .select('DISTINCT setup.hotel_code', 'hotel_code')
+      .where('setup.setup_status = 1')
+      .getRawMany();
+    
+    const activeHotels = activeSetups.map(s => ({ code: s.hotel_code }));
     
     const horizonMonths = parseInt(this.configService.get('ROLLING_HORIZON_MONTHS', '3'), 10);
     const maxHorizonMonths = Math.min(horizonMonths, 12);

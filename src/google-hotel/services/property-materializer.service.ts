@@ -123,6 +123,24 @@ export class PropertyMaterializerService {
       return null;
     }
 
+    // Jika hotel dinonaktifkan di master (status = 0), paksa setup_status jadi 0 dan teardown
+    if (hotel.status !== 1) {
+      this.logger.log(`[HOTEL INACTIVE] Hotel ${hotel.code} is inactive (status = 0). Deactivating setup & tearing down.`);
+      
+      const existingSetups = await manager.find(HotelConnectivitySetup, { where: { hotel_id: hotel.id } });
+      if (existingSetups.length > 0) {
+        await manager.update(HotelConnectivitySetup, { hotel_id: hotel.id }, { setup_status: 0 });
+      }
+
+      return {
+        shouldPush: false,
+        shouldTeardown: true,
+        hotelCode: hotel.code,
+        flatData: existingSetups,
+        deletedSetups: existingSetups,
+      };
+    }
+
     // Auto-Bootstrap: Ensure connectivity setup record exists
     await this.ensureSetupExists(hotel.id, queryRunner);
 
@@ -193,7 +211,7 @@ export class PropertyMaterializerService {
         LEFT JOIN ms_brand br ON h.property_brand = br.id
         JOIN tb_hotel_room_type rt ON rt.hotel_id = h.id
         JOIN tb_hotel_rate_plan rp ON rp.room_type_id = rt.id
-        WHERE h.id = ? ${filterSql}
+        WHERE h.id = ? AND h.status = 1 ${filterSql}
         ON DUPLICATE KEY UPDATE
           hotel_name = VALUES(hotel_name),
           property_category = VALUES(property_category),
@@ -274,26 +292,28 @@ export class PropertyMaterializerService {
     roomTypeId?: number,
     ratePlanId?: number
   ): Promise<void> {
-    // 1. Dispatch Static Profile Feeds (ListFeed & Transaction Metadata) to Google
-    if (flatData && flatData.length > 0) {
-      this.logger.log(`[STATIC PUSH] Generating & sending static profile XML feeds for hotel: ${hotelCode}`);
-      const hotelListFeedXml = GoogleStaticFeedBuilder.buildHotelListFeed(flatData);
-      const transactionMetadataXml = GoogleStaticFeedBuilder.buildTransactionMetadata(hotelCode, flatData);
+    // // 1. Dispatch Static Profile Feeds (ListFeed & Transaction Metadata) to Google
+    // if (flatData && flatData.length > 0) {
+    //   this.logger.log(`[STATIC PUSH] Generating & sending static profile XML feeds for hotel: ${hotelCode}`);
+    //   const hotelListFeedXml = GoogleStaticFeedBuilder.buildHotelListFeed(flatData);
+    //   const transactionMetadataXml = GoogleStaticFeedBuilder.buildTransactionMetadata(hotelCode, flatData);
 
-      await this.googleApiService.pushPayload(hotelCode, hotelListFeedXml, 'ListFeed');
-      await this.googleApiService.pushPayload(hotelCode, transactionMetadataXml, 'Transaction');
-    } else {
-      this.logger.warn(`[STATIC PUSH SKIPPED] Connectivity setup data is empty for hotel ${hotelCode}. Skipping static push.`);
-    }
+    //   await this.googleApiService.pushPayload(hotelCode, hotelListFeedXml, 'ListFeed');
+    //   await this.googleApiService.pushPayload(hotelCode, transactionMetadataXml, 'Transaction');
+    // } else {
+    //   this.logger.warn(`[STATIC PUSH SKIPPED] Connectivity setup data is empty for hotel ${hotelCode}. Skipping static push.`);
+    // }
 
-    // 2. Domino Effect: If Room or Rate Plan updates occur, trigger 365-day ARI synchronization
-    if (updateType !== 'HOTEL_UPDATE' && updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE' && updateType !== 'HOTEL_DELETE') {
-      const startDate = new Date().toISOString().split('T')[0];
-      const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    // // 2. Domino Effect: If Room or Rate Plan updates occur, trigger 365-day ARI synchronization
+    // if (updateType !== 'HOTEL_UPDATE' && updateType !== 'ROOM_DELETE' && updateType !== 'RATE_PLAN_DELETE' && updateType !== 'HOTEL_DELETE') {
+    //   const startDate = new Date().toISOString().split('T')[0];
+    //   const endDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      this.logger.log(`[DOMINO EFFECT] Triggering 365-day ARI synchronization for hotel: ${hotelCode} (${startDate} to ${endDate})`);
-      await this.googleSyncService.syncDateRange(hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType);
-    }
+    //   this.logger.log(`[DOMINO EFFECT] Triggering 365-day ARI synchronization for hotel: ${hotelCode} (${startDate} to ${endDate})`);
+    //   await this.googleSyncService.syncDateRange(hotelCode, startDate, endDate, roomTypeId, ratePlanId, updateType);
+    // }
+    this.logger.log(`[EXTERNAL PUSH DISABLED] Skipping static profile feeds and domino ARI sync for hotel: ${hotelCode} (${updateType}). Managed strictly via Delta/Manual Sync.`);
+    return;
   }
 
   /**
