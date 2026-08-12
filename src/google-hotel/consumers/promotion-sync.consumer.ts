@@ -15,7 +15,7 @@ export class PromotionSyncConsumer {
     private readonly promoRepo: PromotionRepositoryService,
     private readonly promoMaterializer: PromotionMaterializerService,
     private readonly googleApiService: GoogleApiService,
-    @InjectRepository(HotelConnectivitySetup)
+    @InjectRepository(HotelConnectivitySetup, 'googleConnection') // <-- Diarahkan ke DB Google
     private readonly setupRepo: Repository<HotelConnectivitySetup>,
   ) {}
 
@@ -98,30 +98,38 @@ export class PromotionSyncConsumer {
             }
           }
         } else {
-          // --- ROLE 1: SPECIFIC HOTEL ---
-          const hotelId = promoEntity.hotel_id;
-          if (!hotelId) {
-            this.logger.warn(`[PROMOTION CONSUMER] Specific promotion ID: ${promotionId} is missing hotel_id. Skipping event.`);
+          // --- ROLE 1: SPECIFIC HOTEL (Can apply to one or multiple hotels) ---
+          
+          // 1. Extract all hotel_ids from the applies relation
+          const targetHotelIds = promoEntity.applies && promoEntity.applies.length > 0 
+            ? promoEntity.applies.map(app => app.hotel_id).filter(Boolean)
+            : [];
+
+          if (targetHotelIds.length === 0) {
+            this.logger.warn(`[PROMOTION CONSUMER] Specific promotion ID: ${promotionId} is missing hotel_id(s) in applies relation. Skipping event.`);
             continue;
           }
 
-          // Retrieve hotel code
-          const setup = await this.setupRepo.findOne({
-            where: { hotel_id: hotelId },
-            select: { hotel_code: true },
+          // 2. Retrieve hotel codes for all targeted hotel IDs from the Google setup repository
+          const setups = await this.setupRepo.find({
+            where: targetHotelIds.map(id => ({ hotel_id: id })),
+            select: { hotel_code: true, hotel_id: true },
           });
 
-          if (!setup) {
-            this.logger.warn(`[PROMOTION CONSUMER] Setup record not found for hotel ID: ${hotelId}. Skipping event.`);
+          if (setups.length === 0) {
+            this.logger.warn(`[PROMOTION CONSUMER] Setup records not found for specific promotion ID: ${promotionId}. Skipping event.`);
             continue;
           }
 
-          const targetCode = setup.hotel_code;
-          this.logger.log(`[PROMOTION SPECIFIC] Distributing specific promotion ID: ${promotionId} to Hotel: ${targetCode} (action: ${action})`);
+          // 3. Loop through each target hotel to materialize and push the promotion XML payload
+          for (const setup of setups) {
+            const targetCode = setup.hotel_code;
+            this.logger.log(`[PROMOTION SPECIFIC] Distributing specific promotion ID: ${promotionId} to Hotel: ${targetCode} (action: ${action})`);
 
-          const xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, action);
-          if (xmlPayload) {
-            await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
+            const xmlPayload = this.promoMaterializer.materialize(targetCode, promoEntity, action);
+            if (xmlPayload) {
+              await this.googleApiService.pushPayload(targetCode, xmlPayload, 'Promotions');
+            }
           }
         }
 

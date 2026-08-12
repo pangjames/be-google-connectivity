@@ -12,7 +12,7 @@ export class GoogleHorizonCron {
   private readonly logger = new Logger(GoogleHorizonCron.name);
 
   constructor(
-    @InjectRepository(HotelConnectivitySetup)
+    @InjectRepository(HotelConnectivitySetup, 'googleConnection') // <-- Diarahkan ke DB Google
     private readonly setupRepo: Repository<HotelConnectivitySetup>,
     private readonly googleSyncService: GoogleSyncService,
     private readonly calendarRepo: CalendarRepositoryService,

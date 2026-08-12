@@ -38,16 +38,31 @@ import { TestSQSController } from './controllers/test-sqs.controller';
 @Module({
   imports: [
     ConfigModule.forRoot(),
+    TypeOrmModule.forRoot({
+      name: 'googleConnection',
+      type: 'mysql',
+      host: process.env.DB_GOOGLE_HOST || '127.0.0.1',
+      port: parseInt(process.env.DB_GOOGLE_PORT || '3306', 10),
+      username: process.env.DB_GOOGLE_USERNAME || 'root',
+      password: process.env.DB_GOOGLE_PASSWORD || '',
+      database: process.env.DB_GOOGLE_DATABASE || 'crm-azana-dev',
+      entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+      synchronize: false,
+    }),
+    // 1. Entitas Core (Koneksi Default)
     TypeOrmModule.forFeature([
       Hotel, 
-      HotelCalendarInventory, 
       HotelRoomType, 
       HotelRatePlan, 
       HotelPromotion,
       HotelPromotionBlackout,
       HotelPromotionApply,
-      HotelConnectivitySetup,
     ]),
+    // 2. Entitas Google (Koneksi Terisolasi)
+    TypeOrmModule.forFeature([
+      HotelConnectivitySetup,
+      HotelCalendarInventory,
+    ], 'googleConnection'),
     SqsModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
