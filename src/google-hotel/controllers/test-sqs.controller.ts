@@ -4,15 +4,6 @@ import { ApiTags, ApiOperation, ApiBody, ApiProperty } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 
 // --- DTO All Flow ---
-
-class BootstrapDto {
-  @ApiProperty({ example: { hotelId: 108 } })
-  entityReference: { hotelId: number };
-  
-  @ApiProperty({ example: 'INITIAL_BOOTSTRAP' })
-  updateType: string;
-}
-
 class HotelUpdateDto {
   @ApiProperty({ example: { hotelId: 108 } })
   entityReference: { hotelId: number };
@@ -141,13 +132,6 @@ export class TestSQSController {
     } catch (err: any) {
       throw new Error(`Failed to send to SQS: ${err.message}`);
     }
-  }
-
-  @Post('bootstrap')
-  @ApiOperation({ summary: 'Test SQS: INITIAL_BOOTSTRAP' })
-  @ApiBody({ type: BootstrapDto })
-  async testBootstrap(@Body() body: BootstrapDto) {
-    return this.dispatch(body);
   }
 
   @Post('hotel-update')
