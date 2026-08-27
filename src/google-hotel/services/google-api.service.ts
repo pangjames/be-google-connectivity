@@ -12,13 +12,23 @@ export class GoogleApiService {
   }
 
   private getEndpointPath(messageType: string): string {
-    if (messageType.includes('Rate')) return '/travel/hotels/uploads/ota/hotel_rate_amount_notif';
-    if (messageType.includes('Avail')) return '/travel/hotels/uploads/ota/hotel_avail_notif';
-    if (messageType.includes('Inv')) return '/travel/hotels/uploads/ota/hotel_inv_count_notif';
-    if (messageType.includes('Promotions')) return '/travel/hotels/uploads/promotions';
-    if (messageType.includes('Property')) return '/travel/hotels/uploads/property_data';
+    if (messageType.includes('Rate')) {
+      return this.configService.get<string>('GOOGLE_ENDPOINT_RATE') || '/travel/hotels/uploads/ota/hotel_rate_amount_notif';
+    }
+    if (messageType.includes('Avail')) {
+      return this.configService.get<string>('GOOGLE_ENDPOINT_AVAIL') || '/travel/hotels/uploads/ota/hotel_avail_notif';
+    }
+    if (messageType.includes('Inv')) {
+      return this.configService.get<string>('GOOGLE_ENDPOINT_INV') || '/travel/hotels/uploads/ota/hotel_inv_count_notif';
+    }
+    if (messageType.includes('Promotions')) {
+      return this.configService.get<string>('GOOGLE_ENDPOINT_PROMOTIONS') || '/travel/hotels/uploads/promotions';
+    }
+    if (messageType.includes('Property')) {
+      return this.configService.get<string>('GOOGLE_ENDPOINT_PROPERTY') || '/travel/hotels/uploads/property_data';
+    }
     
-    return '/travel/hotels/uploads/ari';
+    return this.configService.get<string>('GOOGLE_ENDPOINT_DEFAULT') || '/travel/hotels/uploads/ari';
   }
 
   async pushPayload(hotelCode: string, xmlPayload: string, messageType: string): Promise<boolean> {
